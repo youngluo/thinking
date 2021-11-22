@@ -1,11 +1,11 @@
-# `@think/deep-clone`
+# `@thinking/deep-clone`
 
 > TODO: description
 
 ## Usage
 
 ```
-const deepClone = require('@think/deep-clone');
+const deepClone = require('@thinking/deep-clone');
 
 // TODO: DEMONSTRATE API
 ```

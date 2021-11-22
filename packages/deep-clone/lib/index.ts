@@ -9,9 +9,9 @@ const getType = (target: any) => Object.prototype.toString.call(target)
 export default function deepClone(target: any, cache = new WeakMap()) {
   const type = getType(target)
   if (DEEP_TYPES.includes(type)) {
-    // 根据构造函数初始化引用数据类型
+    // initialize the reference type according to the constructor
     const cloneObj = new target.constructor()
-    // 处理循环引用
+    // circular references
     if (cache.has(target)) return cache.get(target)
     cache.set(target, cloneObj)
 

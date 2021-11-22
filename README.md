@@ -1,29 +1,34 @@
-# thinking
+# Thinking
 
 [![lerna](https://img.shields.io/badge/maintained%20with-lerna-cc00ff.svg)](https://lerna.js.org/)
 
-### command
+### Commands
 
-#### yarn workspace
+#### Yarn workspace
 
 ```shell
-# 在根目录安装公共依赖
-yarn add -W <package-name>
-# 为指定 workspace 安装依赖
-yarn workspace <workspace-name> add <package-name>
-# 在所有 workspace 中执行命令
+# install public dependencies in the root directory
+yarn add -W <package>
+
+# install dependencies for the specified workspace
+yarn workspace <workspace> add <package>
+
+# execute commands in all workspace
 yarn workspaces run <command>
-# 在指定 <workspace> 中执行命令
+
+# execute the command in the specified workspace
 yarn workspace <workspace> <command>
 ```
 
-#### lerna
+#### Lerna
 
 ```shell
-# 为所有 packages/* 安装依赖
-lerna add <package-name>
-# 为单个 workspace 安装依赖
-lerna add <package-name> --scope <workspace-name>
-# 在所有 workspace 中执行命令
+# install dependencies for packages/*
+lerna add <package>
+
+# install dependencies for the specified workspace
+lerna add <package> --scope <workspace>
+
+# execute commands in all workspace
 lerna run <command>
 ```

@@ -1,11 +1,11 @@
 {
-  "name": "@thinking/deep-clone",
+  "name": "@thinking/event-emitter",
   "version": "1.0.0",
   "description": "> TODO: description",
   "author": "Young <ly532265997@gmail.com>",
   "homepage": "https://github.com/youngluo/thinking#readme",
   "license": "MIT",
-  "main": "dist/index.js",
+  "main": "lib/event-emitter.js",
   "directories": {
     "lib": "lib",
     "test": "__tests__"

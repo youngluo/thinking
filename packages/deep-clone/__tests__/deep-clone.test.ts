@@ -21,7 +21,7 @@ const mapObject = {
   bar: map,
 }
 
-// Symbol key 不可遍历
+// Symbol key isn't enumerable
 // const abc = Symbol('abc')
 const symbolObject = {
   // foo: { [abc]: 2 },
@@ -29,7 +29,7 @@ const symbolObject = {
   bar: [{ a: 2 }],
 }
 
-describe('@think/deep-clone', () => {
+describe('@thinking/deep-clone', () => {
   test('[basic object] should have all the same properties', () => {
     expect(deepClone(basicObject)).toStrictEqual(basicObject)
   })
