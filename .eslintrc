@@ -18,7 +18,7 @@
     "window": true,
     "node": true
   },
-  "extends": ["airbnb-base"],
+  // "extends": ["airbnb-base"],
   "plugins": ["@typescript-eslint/eslint-plugin", "import"],
   "rules": {
     "semi": ["error", "never"],

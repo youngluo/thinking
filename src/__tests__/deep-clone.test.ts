@@ -1,4 +1,4 @@
-import deepClone from '../lib/index'
+import deepClone from '../deep-clone'
 
 const basicObject = {
   foo: { b: { c: { d: [{ a: 1, c: '5' }] } } },
@@ -29,7 +29,7 @@ const symbolObject = {
   bar: [{ a: 2 }],
 }
 
-describe('@thinking/deep-clone', () => {
+describe('deep-clone', () => {
   test('[basic object] should have all the same properties', () => {
     expect(deepClone(basicObject)).toStrictEqual(basicObject)
   })

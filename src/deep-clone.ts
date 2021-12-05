@@ -25,13 +25,13 @@ export default function deepClone(target: any, cache = new WeakMap()) {
 
     if (type === MAP_TYPE) {
       target.forEach((v: any, k: any) => {
-        cloneObj.set(k, v)
+        cloneObj.set(k, deepClone(v, cache))
       })
     }
 
     if (type === SET_TYPE) {
       target.forEach((v: any) => {
-        cloneObj.add(v)
+        cloneObj.add(deepClone(v, cache))
       })
     }
 
