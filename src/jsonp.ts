@@ -5,7 +5,7 @@ export default function jsonp(url: string, params: {}) {
     script.src = `${url}?callback=${jsonpName}`
     document.appendChild(script)
 
-    window[jsonpName] = (response) => {
+    window[jsonpName] = (response: any) => {
       resolve(response)
       delete window[jsonpName]
       document.removeChild(script)
