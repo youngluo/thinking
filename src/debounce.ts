@@ -9,9 +9,16 @@ export function debounce(fn: Function, delay: number = 0, immediate = false) {
 
   return function (...args: any[]) {
     if (timer) clearTimeout(timer)
+
+    if (immediate && !timer) {
+      // @ts-ignore
+      fn.apply(this, args)
+    }
+
     timer = setTimeout(() => {
       // @ts-ignore
       fn.apply(this, args)
+      timer = null as unknown as NodeJS.Timeout
     }, delay)
   }
 }
