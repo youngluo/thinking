@@ -20,7 +20,7 @@ export default function reduce<T>(
   return pre
 }
 
-// const array = [1]
+const array = ['1']
 
 // console.log(
 //   array.reduce((a, b, i, arr) => {
@@ -29,13 +29,13 @@ export default function reduce<T>(
 //   }, 0)
 // )
 
-// console.log(
-//   reduce(
-//     array,
-//     (a, b, i, arr) => {
-//       console.log('==2===', a, b, i, arr)
-//       return b
-//     },
-//     0
-//   )
-// )
+console.log(
+  reduce(
+    array,
+    (a, b, i, arr) => {
+      console.log('==2===', a, b, i, arr)
+      return a
+    },
+    0
+  )
+)
