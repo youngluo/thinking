@@ -15,7 +15,11 @@ export default function deepClone(target: any, cache = new WeakMap()) {
     if (cache.has(target)) return cache.get(target)
     cache.set(target, cloneObj)
 
-    if (type === ARRAY_TYPE) return target.map((v: any) => deepClone(v, cache))
+    if (type === ARRAY_TYPE) {
+      target.forEach((v: any, index: number) => {
+        cloneObj[index] = deepClone(v, cache)
+      })
+    }
 
     if (type === OBJECT_TYPE) {
       Object.entries(target).forEach(([k, v]) => {
