@@ -1,4 +1,4 @@
-import deepClone from '../deep-clone'
+import deepClone from '../deepClone'
 
 const basicObject = {
   foo: { b: { c: { d: [{ a: 1, c: '5' }] } } },

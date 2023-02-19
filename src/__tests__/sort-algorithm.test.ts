@@ -1,4 +1,4 @@
-import { bubblingSort, selectSorted, insertOrder, quickSort } from '../sort-algorithm'
+import { bubblingSort, selectSorted, insertOrder, quickSort } from '../sortAlgorithm'
 
 describe('sort algorithm', () => {
   test('bubbling sort', () => {
