@@ -9,6 +9,10 @@ describe('eq', () => {
     expect(eq({ a: 1, b: 2 }, { a: 1, b: 2 })).toBe(true)
   })
 
+  test('"eq({ b: 2, a: 1 }, { a: 1, b: 2 })" should be equal to "true"', () => {
+    expect(eq({ b: 2, a: 1 }, { a: 1, b: 2 })).toBe(true)
+  })
+
   test('"eq({ a: 1, b: 2 }, { a: 1 })" should be equal to "false"', () => {
     expect(eq({ a: 1, b: 2 }, { a: 1 })).toBe(false)
   })
@@ -19,6 +23,10 @@ describe('eq', () => {
 
   test('"eq({ a: 1, b: { c: 2} }, { a: 1, b: { c: 2 } })" should be equal to "true"', () => {
     expect(eq({ a: 1, b: { c: 2 } }, { a: 1, b: { c: 2 } })).toBe(true)
+  })
+
+  test('"eq({ a: 1, b: { c: 2, d: 3 } }, { b: { d: 3, c: 2 }, a: 1 })" should be equal to "true"', () => {
+    expect(eq({ a: 1, b: { c: 2, d: 3 } }, { b: { d: 3, c: 2 }, a: 1 })).toBe(true)
   })
 
   test('"eq(null, null)" should be equal to "true"', () => {
