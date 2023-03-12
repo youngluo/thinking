@@ -6,7 +6,7 @@ const REF_TYPES = [OBJECT_TYPE, ARRAY_TYPE, MAP_TYPE, SET_TYPE]
 
 const getType = (target: unknown) => Object.prototype.toString.call(target)
 
-export default function eq(target: any, other: any) {
+export default function eq(target: any, other: any): boolean {
   const targetType = getType(target)
   const otherType = getType(other)
   if (targetType !== otherType) return false
@@ -27,5 +27,20 @@ export default function eq(target: any, other: any) {
     return true
   }
 
+  if (targetType === ARRAY_TYPE) {
+    if (target.length !== other.length) return false
+    let n = target.length - 1
+    while (n >= 0) {
+      if (!eq(target[n], other[n])) return false
+      n--
+    }
+    return true
+  }
+
+  if (targetType === MAP_TYPE) {
+    return eq(Array.from(target), Array.from(other))
+  }
+
   //
+  return false
 }
