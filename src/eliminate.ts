@@ -10,7 +10,7 @@ export function eliminate(str: string): string {
   let i = 0
   let j = 1
   let maxLen = 0
-  let deleteIndex = 0
+  let startIndex = 0
 
   while (i < n && j < n) {
     if (strArray[j] === strArray[i]) {
@@ -18,7 +18,7 @@ export function eliminate(str: string): string {
       const len = j - i
       if (len > maxLen) {
         maxLen = len
-        deleteIndex = i
+        startIndex = i
       }
     } else {
       i++
@@ -27,8 +27,7 @@ export function eliminate(str: string): string {
   }
 
   if (maxLen > 0) {
-    strArray.splice(deleteIndex, maxLen)
-    maxLen = 0
+    strArray.splice(startIndex, maxLen)
     return eliminate(strArray.join(''))
   } else {
     return strArray.join('')
