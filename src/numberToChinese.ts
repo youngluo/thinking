@@ -1,3 +1,7 @@
+/**
+ * 实现一个函数，将数字转为中文输出，不超过 10000 亿
+ * numberToChinese(100010001) ==> 一亿零一万零一
+ */
 export function numberToChinese(num: number) {
   if (isNaN(num) || typeof num !== 'number' || num >= 1000000000000) {
     return '无效的数字或数字过大'
