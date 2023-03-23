@@ -12,4 +12,8 @@ describe('longestCommonSubstring', () => {
   test('longestCommonSubstring("12345CD", "12345CD") === "12345CD"', () => {
     expect(longestCommonSubstring('12345CD', '12345CD')).toBe('12345CD')
   })
+
+  test('longestCommonSubstring("", "") === ""', () => {
+    expect(longestCommonSubstring('', '')).toBe('')
+  })
 })
