@@ -36,7 +36,7 @@ export function insertOrder(array: number[]) {
   return array
 }
 
-function getPrivot(array: number[], left: number, right: number) {
+function getPivot(array: number[], left: number, right: number) {
   let l = left
   let r = right
   while (l < r) {
@@ -56,11 +56,18 @@ function getPrivot(array: number[], left: number, right: number) {
   return l
 }
 
+/**
+ * 快速排序
+ * 从数列中挑出一个元素，称为 "基准"（pivot）
+ * 重新排序数列，元素比基准值小的放在左边，比基准值大的放在右边
+ * 在这个分区退出之后，该基准就处于数列的中间位置，这个称为分区（partition）操作
+ * 递归地把小于基准值元素的子数列和大于基准值元素的子数列排序
+ */
 export function quickSort(array: number[], left: number, right: number) {
   if (left < right) {
-    const privot = getPrivot(array, left, right)
-    quickSort(array, left, privot - 1)
-    quickSort(array, privot + 1, right)
+    const pivot = getPivot(array, left, right)
+    quickSort(array, left, pivot - 1)
+    quickSort(array, pivot + 1, right)
   }
   return array
 }

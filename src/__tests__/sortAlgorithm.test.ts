@@ -1,20 +1,22 @@
 import { bubblingSort, selectSorted, insertOrder, quickSort } from '../sortAlgorithm'
 
+const array = [1, 2, 9, 6, 7, 3, 8, 4, 5]
+const result = [1, 2, 3, 4, 5, 6, 7, 8, 9]
+
 describe('sort algorithm', () => {
   test('bubbling sort', () => {
-    expect(bubblingSort([1, 2, 9, 6, 7, 3, 8, 4, 5])).toStrictEqual([1, 2, 3, 4, 5, 6, 7, 8, 9])
+    expect(bubblingSort([...array])).toStrictEqual(result)
   })
 
   test('select sort', () => {
-    expect(selectSorted([1, 2, 9, 6, 7, 3, 8, 4, 5])).toStrictEqual([1, 2, 3, 4, 5, 6, 7, 8, 9])
+    expect(selectSorted([...array])).toStrictEqual(result)
   })
 
   test('insert sort', () => {
-    expect(insertOrder([1, 2, 9, 6, 7, 3, 8, 4, 5])).toStrictEqual([1, 2, 3, 4, 5, 6, 7, 8, 9])
+    expect(insertOrder([...array])).toStrictEqual(result)
   })
 
   test('quick sort', () => {
-    const array = [3, 2, 9, 6, 7, 1, 8, 4, 5]
-    expect(quickSort(array, 0, array.length - 1)).toStrictEqual([1, 2, 3, 4, 5, 6, 7, 8, 9])
+    expect(quickSort([...array], 0, array.length - 1)).toStrictEqual(result)
   })
 })
