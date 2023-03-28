@@ -16,6 +16,7 @@ Function.prototype.myBind = function () {
   if (targetFn.prototype) {
     o.prototype = targetFn.prototype
   }
+  // 避免 boundFn.prototype 与 targetFn.prototype 指向同一引用
   // 此时 boundFn 的实例 obj 原型链为：obj.__proto__.__proto__ === targetFn.prototype
   boundFn.prototype = new (o as any)()
 
@@ -62,4 +63,11 @@ Function.prototype.MyApply = function (context, args: unknown[]) {
   delete context._fn
 
   return result
+}
+
+export function newFactory(Constructor: Function, ...args: unknown[]): object {
+  // obj.__proto__ = Constructor.prototype
+  const obj = Object.create(Constructor.prototype)
+  const result = Constructor.apply(obj, args)
+  return typeof result === 'object' && result !== null ? result : obj
 }
