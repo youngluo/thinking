@@ -24,7 +24,7 @@ Function.prototype.myBind = function () {
 }
 
 // @ts-ignore
-Function.prototype.MyCall = function (context) {
+Function.prototype.myCall = function (context) {
   // 当 call 第一个参数为 undefined 或者 null 时，this 默认指向 window
   context = context ? Object(context) : window
 
@@ -44,7 +44,7 @@ Function.prototype.MyCall = function (context) {
 }
 
 // @ts-ignore
-Function.prototype.MyApply = function (context, args: unknown[]) {
+Function.prototype.myApply = function (context, args: unknown[]) {
   context = context ? Object(context) : window
   context._fn = this
 
