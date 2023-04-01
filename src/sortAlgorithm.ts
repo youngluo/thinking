@@ -1,20 +1,41 @@
 function swap(array: number[], i: number, j: number) {
   ;[array[i], array[j]] = [array[j], array[i]]
 }
-
+/**
+ * 冒泡排序（稳定）
+ *
+ * 比较相邻的元素，如果第一个比第二个大，就交换他们两个
+ * 对每一对相邻元素做同样的工作，从开始第一对到结尾的最后一对。在这一点，最后的元素应该会是最大的数
+ * 针对所有的元素重复以上的步骤，除了最后一个
+ * 持续每次对越来越少的元素重复上面的步骤，直到没有任何一对数字需要比较
+ *
+ * 时间复杂度：平均：O(n2)、最佳：O(n)、最差：O(n2)
+ */
 export function bubblingSort(array: number[]) {
-  for (let i = 0; i < array.length; i++) {
-    for (let j = i + 1; j < array.length; j++) {
-      if (array[i] > array[j]) swap(array, i, j)
+  const n = array.length
+  for (let i = 0; i < n; i++) {
+    // 将较小元素往前移动
+    for (let j = n - 2; j >= i; j--) {
+      if (array[j] > array[j + 1]) swap(array, j, j + 1)
     }
   }
+
   return array
 }
-
+/**
+ * 选择排序（不稳定）
+ *
+ * 第一次从待排序的数据元素中选出最小（或最大）的一个元素，存放在序列的起始位置
+ * 然后再从剩余的未排序元素中寻找到最小（大）元素，然后放到已排序的序列的末尾
+ * 以此类推，直到全部待排序的数据元素的个数为零
+ *
+ * 时间复杂度：O(n2)
+ */
 export function selectSorted(array: number[]) {
-  for (let i = 0; i < array.length; i++) {
+  const n = array.length
+  for (let i = 0; i < n; i++) {
     let min = i
-    for (let j = i + 1; j < array.length; j++) {
+    for (let j = i + 1; j < n; j++) {
       if (array[min] > array[j]) min = j
     }
     if (min !== i) swap(array, min, i)
