@@ -11,7 +11,7 @@ function swap(array: number[], i: number, j: number) {
  *
  * 时间复杂度：平均：O(n2)、最佳：O(n)、最差：O(n2)
  */
-export function bubblingSort(array: number[]) {
+export function bubbleSort(array: number[]) {
   const n = array.length
   for (let i = 0; i < n; i++) {
     // 将较小元素往前移动
@@ -19,7 +19,6 @@ export function bubblingSort(array: number[]) {
       if (array[j] > array[j + 1]) swap(array, j, j + 1)
     }
   }
-
   return array
 }
 /**
@@ -31,7 +30,7 @@ export function bubblingSort(array: number[]) {
  *
  * 时间复杂度：O(n2)
  */
-export function selectSorted(array: number[]) {
+export function selectionSort(array: number[]) {
   const n = array.length
   for (let i = 0; i < n; i++) {
     let min = i
@@ -42,17 +41,43 @@ export function selectSorted(array: number[]) {
   }
   return array
 }
-
-export function insertOrder(array: number[]) {
-  for (let i = 1; i < array.length; i++) {
-    let v = array[i]
+/**
+ * 插入排序（稳定）
+ *
+ * 将待排序序列第一个元素看做一个有序序列，把第二个元素到最后一个元素当成是未排序序列
+ * 从头到尾依次扫描未排序序列，将扫描到的每个元素插入有序序列的适当位置
+ * 如果待插入的元素与有序序列中的某个元素相等，则将待插入元素插入到相等元素的后面
+ *
+ * 时间复杂度：平均：O(n2)、最佳：O(n)、最差：O(n2)
+ */
+export function insertionOrder(array: number[]) {
+  const n = array.length
+  for (let i = 1; i < n; i++) {
     let j = i
-    while (j > 0) {
-      if (v >= array[j - 1]) break
+    const v = array[j]
+    while (j > 0 && v < array[j - 1]) {
       array[j] = array[j - 1]
       j--
     }
     array[j] = v
+  }
+  return array
+}
+/**
+ * 快速排序（不稳定）
+ *
+ * 从数列中挑出一个元素，称为 "基准"（pivot）
+ * 重新排序数列，元素比基准值小的放在左边，比基准值大的放在右边
+ * 在这个分区退出之后，该基准就处于数列的中间位置，这个称为分区（partition）操作
+ * 递归地把小于基准值元素的子数列和大于基准值元素的子数列排序
+ *
+ * 时间复杂度：平均：O(nlogn)、最佳：O(nlogn)、最差：O(n2)
+ */
+export function quickSort(array: number[], left: number, right: number) {
+  if (left < right) {
+    const pivot = getPivot(array, left, right)
+    quickSort(array, left, pivot - 1)
+    quickSort(array, pivot + 1, right)
   }
   return array
 }
@@ -76,38 +101,6 @@ function getPivot(array: number[], left: number, right: number) {
   }
   return l
 }
-
-/**
- * 快速排序（不稳定）
- *
- * 从数列中挑出一个元素，称为 "基准"（pivot）
- * 重新排序数列，元素比基准值小的放在左边，比基准值大的放在右边
- * 在这个分区退出之后，该基准就处于数列的中间位置，这个称为分区（partition）操作
- * 递归地把小于基准值元素的子数列和大于基准值元素的子数列排序
- *
- * 时间复杂度：平均：O(nlogn)、最佳：O(nlogn)、最差：O(n2)
- */
-export function quickSort(array: number[], left: number, right: number) {
-  if (left < right) {
-    const pivot = getPivot(array, left, right)
-    quickSort(array, left, pivot - 1)
-    quickSort(array, pivot + 1, right)
-  }
-  return array
-}
-
-function merge(left: number[], right: number[]) {
-  const result: number[] = []
-  while (left.length && right.length) {
-    if (left[0] <= right[0]) {
-      result.push(left.shift()!)
-    } else {
-      result.push(right.shift()!)
-    }
-  }
-  return result.concat(left).concat(right)
-}
-
 /**
  * 归并排序（稳定）
  *
@@ -123,3 +116,21 @@ export function mergeSort(array: number[]): number[] {
   const mid = Math.floor(n / 2)
   return merge(mergeSort(array.slice(0, mid)), mergeSort(array.slice(mid)))
 }
+
+function merge(left: number[], right: number[]) {
+  const result: number[] = []
+  while (left.length && right.length) {
+    if (left[0] <= right[0]) {
+      result.push(left.shift()!)
+    } else {
+      result.push(right.shift()!)
+    }
+  }
+  return result.concat(left).concat(right)
+}
+/**
+ * 希尔排序（不稳定）
+ *
+ * 它是简单插入排序经过改进之后的一个更高效的版本，也称为缩小增量排序
+ */
+export function shellSort(array: number[]) {}
