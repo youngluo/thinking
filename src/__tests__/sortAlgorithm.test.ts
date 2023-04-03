@@ -1,4 +1,11 @@
-import { bubbleSort, selectionSort, insertionOrder, quickSort, mergeSort } from '../sortAlgorithm'
+import {
+  bubbleSort,
+  selectionSort,
+  insertionOrder,
+  quickSort,
+  mergeSort,
+  shellSort,
+} from '../sortAlgorithm'
 
 const array = [1, 2, 9, 6, 7, 3, 8, 4, 5]
 const result = [1, 2, 3, 4, 5, 6, 7, 8, 9]
@@ -22,5 +29,9 @@ describe('sort algorithm', () => {
 
   test('merge sort', () => {
     expect(mergeSort([...array])).toStrictEqual(result)
+  })
+
+  test('shell sort', () => {
+    expect(shellSort([...array])).toStrictEqual(result)
   })
 })
