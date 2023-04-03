@@ -50,14 +50,14 @@ export function selectionSort(array: number[]) {
  *
  * 时间复杂度：平均：O(n2)、最佳：O(n)、最差：O(n2)
  */
-export function insertionOrder(array: number[]) {
+export function insertionOrder(array: number[], gap = 1) {
   const n = array.length
-  for (let i = 1; i < n; i++) {
+  for (let i = gap; i < n; i++) {
     let j = i
     const v = array[j]
-    while (j > 0 && v < array[j - 1]) {
-      array[j] = array[j - 1]
-      j--
+    while (j > 0 && v < array[j - gap]) {
+      array[j] = array[j - gap]
+      j -= gap
     }
     array[j] = v
   }
@@ -142,24 +142,13 @@ function merge(left: number[], right: number[]) {
 export function shellSort(array: number[]) {
   const n = array.length
   let gap = 1
-
   while (gap < n / 3) {
     //动态定义间隔序列
     gap = gap * 3 + 1
   }
-
   while (gap > 0) {
-    for (let i = gap; i < n; i++) {
-      const v = array[i]
-      let j = i - gap
-      while (j >= 0 && array[j] > v) {
-        array[j + gap] = array[j]
-        j -= gap
-      }
-      array[j + gap] = v
-    }
+    insertionOrder(array, gap)
     gap = Math.floor(gap / 3)
   }
-
   return array
 }
