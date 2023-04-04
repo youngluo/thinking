@@ -152,3 +152,30 @@ export function shellSort(array: number[]) {
   }
   return array
 }
+/**
+ * 计数排序（稳定）
+ *
+ * 找出待排序的数组中最大和最小的元素
+ * 统计数组中每个值为 i 的元素出现的次数，存入数组 C 的第 i 项
+ * 对所有的计数累加（从 C 中的第一个元素开始，每一项和前一项相加）
+ * 反向填充目标数组：将每个元素 i 放在新数组的第 C(i) 项，每放一个元素就将 C(i) 减去 1
+ *
+ * 时间复杂度：O(n + k)
+ */
+export function countingSort(array: number[], max: number) {
+  const n = max + 1
+  const bucket = new Array(n)
+  for (const v of array) {
+    // 将元素作为序号，并统计出现次数
+    if (!bucket[v]) bucket[v] = 0
+    bucket[v] += 1
+  }
+  let index = 0
+  for (let i = 0; i < n; i++) {
+    while (bucket[i] > 0) {
+      array[index++] = i
+      bucket[i] -= 1
+    }
+  }
+  return array
+}

@@ -5,6 +5,7 @@ import {
   quickSort,
   mergeSort,
   shellSort,
+  countingSort,
 } from '../sortAlgorithm'
 
 const array = [1, 2, 9, 6, 7, 3, 8, 4, 5]
@@ -33,5 +34,9 @@ describe('sort algorithm', () => {
 
   test('shell sort', () => {
     expect(shellSort([...array])).toStrictEqual(result)
+  })
+
+  test('counting sort', () => {
+    expect(countingSort([...array], 9)).toStrictEqual(result)
   })
 })
