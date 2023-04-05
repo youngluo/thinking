@@ -71,3 +71,16 @@ export function newFactory(Constructor: Function, ...args: unknown[]): object {
   const result = Constructor.apply(obj, args)
   return typeof result === 'object' && result !== null ? result : obj
 }
+
+export function _instanceof(left: object, right: Function) {
+  const proto = right.prototype
+  // @ts-ignore
+  left = left.__proto__
+  while (true) {
+    // 查询到原型链末端
+    if (left === null) return false
+    if (left === proto) return true
+    // @ts-ignore
+    left = left.__proto__
+  }
+}
