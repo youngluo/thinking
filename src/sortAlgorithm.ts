@@ -22,6 +22,24 @@ export function bubbleSort(array: number[]) {
   return array
 }
 /**
+ * 冒泡排序（优化版）
+ */
+export function bubbleSortPerf(array: number[]) {
+  const n = array.length
+  let isOk = true
+  for (let i = 0; i < n; i++) {
+    // 将较小元素往前移动
+    for (let j = n - 2; j >= i; j--) {
+      if (array[j] > array[j + 1]) {
+        swap(array, j, j + 1)
+        isOk = false
+      }
+    }
+    if (isOk) break
+  }
+  return array
+}
+/**
  * 选择排序（不稳定）
  *
  * 第一次从待排序的数据元素中选出最小（或最大）的一个元素，存放在序列的起始位置
@@ -162,19 +180,52 @@ export function shellSort(array: number[]) {
  *
  * 时间复杂度：O(n + k)
  */
-export function countingSort(array: number[], max: number) {
-  const n = max + 1
-  const bucket = new Array(n)
+export function countingSort(array: number[]) {
+  const bucket = []
   for (const v of array) {
     // 将元素作为序号，并统计出现次数
     if (!bucket[v]) bucket[v] = 0
     bucket[v] += 1
   }
+  const n = bucket.length
   let index = 0
   for (let i = 0; i < n; i++) {
     while (bucket[i] > 0) {
       array[index++] = i
       bucket[i] -= 1
+    }
+  }
+  return array
+}
+/**
+ * 基数排序（稳定）
+ *
+ * 基数排序是按照低位先排序，然后收集；再按照高位排序，然后再收集；依次类推，直到最高位。
+ *
+ * 时间复杂度：O(n + k)
+ */
+export function radixSort(array: number[], maxDigit: number) {
+  const n = array.length
+  const counter: number[][] = []
+  let mod = 10
+  let dev = 1
+
+  for (let i = 0; i < maxDigit; i++, dev *= 10, mod *= 10) {
+    for (let j = 0; j < n; j++) {
+      const bucket = Math.floor((array[j] % mod) / dev)
+      if (counter[bucket] == null) {
+        counter[bucket] = []
+      }
+      counter[bucket].push(array[j])
+    }
+    let pos = 0
+    for (let j = 0; j < counter.length; j++) {
+      let value = null
+      if (counter[j] != null) {
+        while ((value = counter[j].shift()) != null) {
+          array[pos++] = value
+        }
+      }
     }
   }
   return array

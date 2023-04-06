@@ -1,5 +1,6 @@
 import {
   bubbleSort,
+  bubbleSortPerf,
   selectionSort,
   insertionOrder,
   quickSort,
@@ -8,12 +9,16 @@ import {
   countingSort,
 } from '../sortAlgorithm'
 
-const array = [1, 2, 9, 6, 7, 3, 8, 4, 5]
-const result = [1, 2, 3, 4, 5, 6, 7, 8, 9]
+const array = new Array(5000).fill(0).map(() => Math.ceil(Math.random() * 1000))
+const result = [...array].sort((a, b) => a - b)
 
 describe('sort algorithm', () => {
-  test('bubbleSort sort', () => {
+  test('bubble sort', () => {
     expect(bubbleSort([...array])).toStrictEqual(result)
+  })
+
+  test('bubble sort perf', () => {
+    expect(bubbleSortPerf([...array])).toStrictEqual(result)
   })
 
   test('selection sort', () => {
@@ -37,6 +42,6 @@ describe('sort algorithm', () => {
   })
 
   test('counting sort', () => {
-    expect(countingSort([...array], 9)).toStrictEqual(result)
+    expect(countingSort([...array])).toStrictEqual(result)
   })
 })
