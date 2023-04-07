@@ -68,7 +68,7 @@ export function selectionSort(array: number[]) {
  *
  * 时间复杂度：平均：O(n2)、最佳：O(n)、最差：O(n2)
  */
-export function insertionOrder(array: number[], gap = 1) {
+export function insertionSort(array: number[], gap = 1) {
   const n = array.length
   for (let i = gap; i < n; i++) {
     let j = i
@@ -165,7 +165,7 @@ export function shellSort(array: number[]) {
     gap = gap * 3 + 1
   }
   while (gap > 0) {
-    insertionOrder(array, gap)
+    insertionSort(array, gap)
     gap = Math.floor(gap / 3)
   }
   return array
@@ -229,4 +229,40 @@ export function radixSort(array: number[], maxDigit: number) {
     }
   }
   return array
+}
+/**
+ * 桶排序（稳定）
+ *
+ * 将数组分到有限数量的桶里
+ * 对每个桶分别排序
+ * 最后合并各个桶
+ *
+ * 时间复杂度：平均：O(n + k)、最佳：O(n)、最差：O(n2)
+ */
+export function bucketSort(array: number[], bucketSize = 3) {
+  const n = array.length
+  if (n === 0) return array
+  let minValue = array[0]
+  let maxValue = array[0]
+  for (let i = 1; i < n; i++) {
+    if (array[i] < minValue) {
+      minValue = array[i]
+    } else if (array[i] > maxValue) {
+      maxValue = array[i]
+    }
+  }
+
+  const bucketCount = Math.floor((maxValue - minValue) / bucketSize) + 1
+  const buckets: number[][] = new Array(bucketCount).fill(0).map(() => [])
+  // 将数据分配到各个桶中
+  for (let i = 0; i < n; i++) {
+    buckets[Math.floor((array[i] - minValue) / bucketSize)].push(array[i])
+  }
+
+  const result: number[] = []
+  for (let i = 0; i < buckets.length; i++) {
+    // 对每个桶进行排序，这里使用了插入排序
+    result.concat(insertionSort(buckets[i]))
+  }
+  return result
 }
