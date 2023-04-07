@@ -262,7 +262,7 @@ export function bucketSort(array: number[], bucketSize = 3) {
   const result: number[] = []
   for (let i = 0; i < buckets.length; i++) {
     // 对每个桶进行排序，这里使用了插入排序
-    result.concat(insertionSort(buckets[i]))
+    result.push(...insertionSort(buckets[i]))
   }
   return result
 }

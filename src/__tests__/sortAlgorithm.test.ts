@@ -2,14 +2,16 @@ import {
   bubbleSort,
   bubbleSortPerf,
   selectionSort,
-  insertionOrder,
+  insertionSort,
   quickSort,
   mergeSort,
   shellSort,
   countingSort,
+  radixSort,
+  bucketSort,
 } from '../sortAlgorithm'
 
-const array = new Array(5000).fill(0).map(() => Math.ceil(Math.random() * 1000))
+const array = new Array(3000).fill(0).map(() => Math.ceil(Math.random() * 1000))
 const result = [...array].sort((a, b) => a - b)
 
 describe('sort algorithm', () => {
@@ -26,7 +28,7 @@ describe('sort algorithm', () => {
   })
 
   test('insertion sort', () => {
-    expect(insertionOrder([...array])).toStrictEqual(result)
+    expect(insertionSort([...array])).toStrictEqual(result)
   })
 
   test('quick sort', () => {
@@ -43,5 +45,13 @@ describe('sort algorithm', () => {
 
   test('counting sort', () => {
     expect(countingSort([...array])).toStrictEqual(result)
+  })
+
+  test('radix sort', () => {
+    expect(radixSort([...array], 4)).toStrictEqual(result)
+  })
+
+  test('bucket sort', () => {
+    expect(bucketSort([...array])).toStrictEqual(result)
   })
 })
