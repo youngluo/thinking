@@ -1,11 +1,9 @@
 {
-  "jsxBracketSameLine": false,
-  "arrowParens": "always",
-  "trailingCommas": "es5",
-  "bracketSpacing": true,
-  "jsxSingleQuote": true,
   "singleQuote": true,
-  "printWidth": 100,
-  "semi": false,
-  "tabWidth": 2
+  "tabWidth": 2,
+  "bracketSpacing": true,
+  "jsxBracketSameLine": true,
+  "trailingComma": "es5",
+  "allowParens": "avoid",
+  "semi": false
 }

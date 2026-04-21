@@ -1,3 +1,7 @@
 node_modules
 *.log
 dist
+docs/.vitepress/cache
+docs/.vitepress/dist
+.omc
+*.local.json

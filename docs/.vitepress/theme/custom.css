@@ -1,0 +1,23 @@
+@import 'tailwindcss';
+
+.VPDoc table {
+  table-layout: fixed;
+  width: 100%;
+}
+
+.VPDoc table th:first-child,
+.VPDoc table td:first-child {
+  width: 80px;
+  white-space: nowrap;
+}
+
+.VPDoc h2 {
+  padding: 0;
+  border: none;
+  margin-top: 2rem;
+  margin-bottom: 1rem;
+}
+
+.VPDoc hr {
+  margin: 2rem 0;
+}
