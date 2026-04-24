@@ -22,7 +22,9 @@ describe('numberToChinese', () => {
   })
 
   test('numberToChinese(111111111) === 一亿一千一百一十一万一千一百一十一', () => {
-    expect(numberToChinese(111111111)).toBe('一亿一千一百一十一万一千一百一十一')
+    expect(numberToChinese(111111111)).toBe(
+      '一亿一千一百一十一万一千一百一十一'
+    )
   })
 
   test('numberToChinese(10000) === 一万', () => {

@@ -6,15 +6,13 @@
  * curriedAdd(1, 2)(3) // 6
  * curriedAdd(1)(2, 3) // 6
  */
-export default function curry<T>(func: Func<T>) {
-  return function curried(...args: T[]): unknown {
-    // 如果实际传参数量小于原函数形参数量，说明需要继续进行柯里化调用
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export default function curry<T extends (...args: any[]) => any>(func: T) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return function curried(...args: any[]): any {
     if (args.length < func.length) {
-      // 返回一个新函数并合并参数
       return curried.bind(null, ...args)
     }
     return func(...args)
   }
 }
-
-type Func<T> = (...args: T[]) => unknown

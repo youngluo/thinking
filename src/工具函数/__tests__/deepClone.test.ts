@@ -9,7 +9,7 @@ const circularObject = {
   foo: [{ a: 1, b: {} }],
   bar: { a: 2, c: [{ d: {} }] },
 }
-// @ts-ignore
+// @ts-expect-error circular ref
 circularObject.c = circularObject
 
 const map = new Map()

@@ -1,4 +1,4 @@
-import EventEmitter from '../设计模式/eventEmitter'
+import EventEmitter from '../eventEmitter'
 
 const eventEmitter = new EventEmitter()
 

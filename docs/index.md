@@ -8,6 +8,7 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import TextType from "./components/TextType/TextType.vue";
 import Galaxy from "./components/Galaxy/Galaxy.vue";
 
+const base = import.meta.env.BASE_URL
 </script>
 
 <div class="galaxy-wrap">
@@ -18,7 +19,7 @@ import Galaxy from "./components/Galaxy/Galaxy.vue";
       as="h1"
     />
   </div>
-  <a href="/dashboard.html" class="enter-btn">开始探索</a>
+  <a :href="base + 'dashboard.html'" class="enter-btn">开始探索</a>
 </div>
 
 <style scoped>

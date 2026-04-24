@@ -1,4 +1,4 @@
-import { longestCommonSubstring } from '../longestCommonSubstring'
+import { longestCommonSubstring } from '../最长公共子串'
 
 describe('longestCommonSubstring', () => {
   test('longestCommonSubstring("1AB2345CD", "12345EF") === "2345"', () => {

@@ -16,6 +16,7 @@ const experiencesSidebar = readdirSync('docs/experiences').map((name) => ({
 }))
 
 export default defineConfig({
+  base: process.env.NODE_ENV === 'production' ? '/thinking/' : '/',
   title: 'Thinking',
   vite: {
     plugins: [tailwindcss()],
@@ -26,9 +27,9 @@ export default defineConfig({
     nav: [
       {
         text: '项目经验',
-        link: experiencesSidebar[0]?.items[0]?.link || '/',
+        link: experiencesSidebar[0]?.items[0]?.link,
       },
-      { text: '手写题', link: writingsSidebar[0]?.items[0]?.link || '/' },
+      { text: '手写题', link: writingsSidebar[0]?.items[0]?.link },
     ],
     sidebar: {
       '/experiences/': experiencesSidebar,
@@ -38,9 +39,9 @@ export default defineConfig({
 })
 
 function genSidebar(baseDir: string) {
-  const linkPrefix = '/' + baseDir.replace('docs/', '')
+  const dir = baseDir.replace('docs/', '')
   return globSync(`${baseDir}/*.md`).map((f) => {
     const name = f.match(/\/([^/]+)\.md$/)?.[1] || ''
-    return { text: name, link: `${linkPrefix}/${name}` }
+    return { text: name, link: `/${dir}/${name}` }
   })
 }

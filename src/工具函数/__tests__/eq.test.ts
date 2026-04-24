@@ -26,7 +26,9 @@ describe('eq', () => {
   })
 
   test('"eq({ a: 1, b: { c: 2, d: 3 } }, { b: { d: 3, c: 2 }, a: 1 })" should be equal to "true"', () => {
-    expect(eq({ a: 1, b: { c: 2, d: 3 } }, { b: { d: 3, c: 2 }, a: 1 })).toBe(true)
+    expect(eq({ a: 1, b: { c: 2, d: 3 } }, { b: { d: 3, c: 2 }, a: 1 })).toBe(
+      true
+    )
   })
 
   test('"eq(null, null)" should be equal to "true"', () => {
@@ -46,11 +48,15 @@ describe('eq', () => {
   })
 
   test('"eq([1, 2, { a: 1, b: { c: 2 } }], [1, 2, { a: 1, b: { c: 2 } }])" should be equal to "true"', () => {
-    expect(eq([1, 2, { a: 1, b: { c: 2 } }], [1, 2, { a: 1, b: { c: 2 } }])).toBe(true)
+    expect(
+      eq([1, 2, { a: 1, b: { c: 2 } }], [1, 2, { a: 1, b: { c: 2 } }])
+    ).toBe(true)
   })
 
   test('"eq([1, 2, { b: { c: 2 }, a: 1 }], [1, 2, { a: 1, b: { c: 2 } }])" should be equal to "true"', () => {
-    expect(eq([1, 2, { b: { c: 2 }, a: 1 }], [1, 2, { a: 1, b: { c: 2 } }])).toBe(true)
+    expect(
+      eq([1, 2, { b: { c: 2 }, a: 1 }], [1, 2, { a: 1, b: { c: 2 } }])
+    ).toBe(true)
   })
 
   test('"eq(Map([["a", 1], ["b", 2]]), Map([["a", 1], ["b", 2]]))" should be equal to "true"', () => {

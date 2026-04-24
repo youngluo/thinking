@@ -9,7 +9,7 @@ import {
   countingSort,
   radixSort,
   bucketSort,
-} from '../sortAlgorithm'
+} from '../排序算法'
 
 const array = new Array(3000).fill(0).map(() => Math.ceil(Math.random() * 1000))
 const result = [...array].sort((a, b) => a - b)

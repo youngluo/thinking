@@ -1,4 +1,4 @@
-import curry from '../curry'
+import curry from '../柯里化'
 
 function testFn(a: number, b: number, c: number) {
   return a + b + c

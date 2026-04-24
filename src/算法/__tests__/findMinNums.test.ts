@@ -1,4 +1,4 @@
-import { findMinNums } from '../findMinNums'
+import { findMinNums } from '../查找最小的 k 个数'
 
 describe('findMinNums', () => {
   test('findMinNums([4, 5, 1, 6, 2, 7, 3, 8], 4) === [4, 3, 2, 1]', () => {

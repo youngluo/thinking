@@ -1,4 +1,4 @@
-import { LRUCache } from '../LRUCache'
+import { LRUCache } from '../LRU 缓存'
 
 const cache = new LRUCache(2)
 
