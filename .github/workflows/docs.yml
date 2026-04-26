@@ -2,12 +2,15 @@ name: Docs
 
 on:
   push:
-    branches: [main]
+    branches: [ main ]
     paths:
-      - 'src/**/*.ts'
-      - 'docs/**'
-      - 'scripts/**'
-      - 'package.json'
+      - "packages/utils/src/**/*.ts"
+      - "packages/utils/__tests__/**"
+      - "apps/docs/**"
+      - "scripts/**"
+      - "package.json"
+      - "turbo.json"
+      - "pnpm-workspace.yaml"
 
 permissions:
   contents: read
@@ -41,15 +44,15 @@ jobs:
         run: pnpm test
 
       - name: Generate docs
-        run: pnpm run docs:generate
+        run: pnpm docs:generate
 
       - name: Build with VitePress
-        run: pnpm run docs:build
+        run: pnpm docs:build
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v4
         with:
-          path: docs/.vitepress/dist
+          path: apps/docs/.vitepress/dist
 
   deploy:
     environment:

@@ -1,0 +1,24 @@
+{
+  "name": "@thinking/docs",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "docs:build": "vitepress build .",
+    "docs:dev": "vitepress dev ."
+  },
+  "devDependencies": {
+    "@thinking/utils": "workspace:*",
+    "@tailwindcss/vite": "^4.2.4",
+    "@vainjs/eslint-config": "latest",
+    "@vue/devtools": "^7.0.0",
+    "@vueuse/core": "^10.0.0",
+    "glob": "^13.0.6",
+    "gsap": "^3.13.0",
+    "@types/lodash-es": "^4.17.12",
+    "lodash-es": "^4.18.1",
+    "ogl": "^1.0.11",
+    "tailwindcss": "^4.2.4",
+    "vitepress": "^1.0.0"
+  }
+}

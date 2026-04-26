@@ -1,40 +1,66 @@
-import { readdirSync, statSync } from 'fs'
 import tailwindcss from '@tailwindcss/vite'
 import { defineConfig } from 'vitepress'
-import { size, map, get } from 'lodash-es'
-import { globSync } from 'glob'
+import { size, map } from 'lodash-es'
 
-type SidebarItem =
-  | { text: string; collapsed?: boolean; items?: ReturnType<typeof genSidebar> }
-  | { text: string; link: string }
-
-function genSidebar(baseDir: string) {
-  const dir = baseDir.replace('docs/', '')
-  return globSync(`${baseDir}/*.md`).map((f) => {
-    const name = f.match(/\/([^/]+)\.md$/)?.[1] || ''
-    return { text: name, link: `/${dir}/${name}` }
-  })
+type SidebarItem = {
+  text: string
+  collapsed?: boolean
+  link?: string
+  items?: SidebarItem[]
 }
 
-function genNavItem(name: string, baseDir: string): SidebarItem {
-  const path = `${baseDir}/${name}`
-  const isDir = statSync(path).isDirectory()
-  if (isDir) {
-    return { text: name, collapsed: true, items: genSidebar(path) }
+const writingsSidebar = [
+  {
+    text: '算法',
+    items: [
+      '最长公共子串',
+      'reduplicationHandler',
+      '排序算法',
+      '查找最小的 k 个数',
+      '链表消消乐',
+    ],
+  },
+  { text: '数据结构', items: ['LinkedHashMap', 'LRU 缓存'] },
+  { text: '设计模式', items: ['EventEmitter', 'observer'] },
+  { text: '函数式', items: ['koa-compose', 'reduce', '柯里化'] },
+  {
+    text: '工具函数',
+    items: [
+      'bind',
+      'concurrentHandle',
+      'createRepeat',
+      'debounce',
+      'deepClone',
+      'eq',
+      'inherits',
+      'iterable',
+      'jsonp',
+      'query',
+      'retry',
+      'sleep',
+      'template',
+      'thousands',
+      'transform',
+      'uniqueOrderArray',
+    ],
+  },
+].map((item) => {
+  if (size(item.items) > 0) {
+    return {
+      text: item.text,
+      collapsed: true,
+      items: map(item.items, (page) => ({
+        link: `/writings/${item.text}/${page}`,
+        text: page,
+      })),
+    }
   }
-  return {
-    text: name.replace('.md', ''),
-    link: `/${baseDir.split('/')[1]}/${name.replace('.md', '')}`,
-  }
-}
-
-const writingsSidebar: SidebarItem[] = readdirSync('docs/writings').map(
-  (name) => genNavItem(name, 'docs/writings')
-)
+  return { text: item.text, link: `/writings/${item.text}` }
+})
 
 const getFirstLink = (sidebar: SidebarItem[]) => {
   for (const item of sidebar) {
-    if ('items' in item) return get(item.items, '[0].link')
+    if ('items' in item && item.items?.[0]) return item.items[0].link
     if ('link' in item) return item.link
   }
 }
@@ -69,6 +95,7 @@ export default defineConfig({
   title: 'Thinking',
   vite: {
     plugins: [tailwindcss()],
+    cacheDir: '.vitepress/cache',
   },
   description: '前端经验总结',
   srcDir: '.',

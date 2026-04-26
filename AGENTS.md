@@ -5,30 +5,59 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-npm test           # Run all tests (Jest)
-npm run commit     # Interactive commit via commitizen (cz-conventional-changelog)
+pnpm test           # Run all tests (turbo)
+pnpm build          # Build all packages (turbo)
+pnpm docs:dev       # Start VitePress docs dev server
+pnpm docs:build     # Build VitePress docs
 ```
 
-- Single test: `npx jest src/__tests__/<filename>`
+- Single test: `cd packages/utils && pnpm test`
 - Lint: `eslint --fix` (configured via husky pre-commit hook)
+
+## Commit Rules
+
+**All commits must use the `commit` skill.** Use the `Skill` tool to invoke `commit` for guided commit message creation.
 
 ## Architecture
 
-TypeScript utilities library with the following structure:
+Turbo Monorepo with the following structure:
 
 ```
-src/
-├── algorithms/      # Algorithm implementations (sorting, string matching, etc.)
-├── dataStructures/ # Data structure implementations (LRU cache, linked hash map)
-├── designPatterns/ # Design patterns (event emitter, observer)
-├── functional/     # Functional utilities (compose, curry, flatDeep, reduce)
-├── utils/          # General utilities (debounce, deepClone, query, retry, etc.)
-└── __tests__/      # Test files co-located in single directory
+├── apps/
+│   └── docs/                  # VitePress documentation site
+├── packages/
+│   ├── utils/                # @thinking/utils - TypeScript utilities
+│   └── rc/                    # @thinking/rc - React components (empty)
+├── turbo.json                # Build pipeline configuration
+├── pnpm-workspace.yaml       # Workspace packages definition
+└── tsconfig.base.json       # Shared TypeScript configuration
 ```
+
+### @thinking/utils
+
+Source code at `packages/utils/src/`:
+
+```
+├── 算法/            # Algorithm implementations
+├── 数据结构/        # Data structure implementations
+├── 设计模式/        # Design patterns
+├── 函数式/          # Functional utilities
+└── 工具函数/        # General utilities
+```
+
+### @thinking/docs
+
+VitePress documentation at `apps/docs/`:
+
+- Scripts: `scripts/generate-docs.ts` - Auto-generate docs from source
+- Writings: `apps/docs/writings/` - Auto-generated API documentation
 
 ## Tech Stack
 
-- **TypeScript**: Strict mode, ES5 target, CommonJS modules
-- **Testing**: Jest with ts-jest preset
-- **Linting**: ESLint + TypeScript plugin, runs via husky pre-commit
+- **Package Manager**: pnpm workspaces
+- **Build Tool**: Turborepo
+- **TypeScript**: ES2020 target, ESNext modules
+- **Testing**: Jest with ts-jest preset (in packages/utils)
+- **Linting**: ESLint + Prettier via husky pre-commit
 - **Commits**: commitlint + commitizen with conventional-changelog format
+- **Documentation**: VitePress

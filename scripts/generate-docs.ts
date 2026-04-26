@@ -11,8 +11,8 @@ import { fileURLToPath } from 'url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const rootDir = join(__dirname, '..')
-const docsDir = join(rootDir, 'docs')
-const srcDir = join(rootDir, 'src')
+const docsDir = join(rootDir, 'apps/docs/writings')
+const srcDir = join(rootDir, 'packages/utils/src')
 
 interface FunctionDoc {
   title: string
@@ -121,11 +121,10 @@ function getAllTsFiles(
 }
 
 function generateDocs() {
-  const writingDir = join(docsDir, 'writings')
-  if (existsSync(writingDir)) {
-    rmSync(writingDir, { recursive: true })
+  if (existsSync(docsDir)) {
+    rmSync(docsDir, { recursive: true })
   }
-  mkdirSync(writingDir, { recursive: true })
+  mkdirSync(docsDir, { recursive: true })
 
   const tsFiles = getAllTsFiles(srcDir)
 
@@ -152,7 +151,7 @@ function generateDocs() {
         })
         .join('\n')
 
-    const outputDir = join(docsDir, 'writings', category)
+    const outputDir = join(docsDir, category)
     mkdirSync(outputDir, { recursive: true })
 
     writeFileSync(join(outputDir, filename + '.md'), description)

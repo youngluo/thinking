@@ -1,7 +1,11 @@
 node_modules
 *.log
-dist
-docs/.vitepress/cache
-docs/.vitepress/dist
 .omc
 *.local.json
+
+.turbo/
+
+dist/
+
+apps/docs/.vitepress/cache
+.playwright-mcp

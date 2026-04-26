@@ -1,30 +1,17 @@
 {
   "name": "thinking",
   "version": "0.0.0",
-  "private": "true",
+  "private": true,
   "license": "MIT",
   "author": "Young <ly532265997@gmail.com>",
-  "type": "module",
-  "main": "index.js",
   "scripts": {
-    "commit": "git add -A && git-cz",
-    "docs:build": "vitepress build docs",
-    "docs:dev": "pnpm docs:generate && vitepress dev docs",
+    "build": "turbo run build",
+    "docs:build": "turbo run docs:build --filter=@thinking/docs",
+    "docs:dev": "pnpm docs:generate && turbo run docs:dev --filter=@thinking/docs",
     "docs:generate": "tsx scripts/generate-docs.ts",
     "preinstall": "npx only-allow pnpm",
     "prepare": "husky",
-    "test": "jest"
-  },
-  "jest": {
-    "testEnvironment": "node",
-    "transform": {
-      "^.+\\.tsx?$": [
-        "ts-jest",
-        {
-          "useESM": true
-        }
-      ]
-    }
+    "test": "turbo run test"
   },
   "commitlint": {
     "extends": [
@@ -37,40 +24,17 @@
       "prettier --write"
     ]
   },
-  "config": {
-    "commitizen": {
-      "path": "cz-conventional-changelog"
-    }
-  },
   "devDependencies": {
     "@commitlint/cli": "^19.8.1",
     "@commitlint/config-conventional": "^19.8.1",
-    "@tailwindcss/vite": "^4.2.4",
-    "@types/jest": "^29.5.14",
-    "@types/lodash-es": "^4.17.12",
-    "@types/node": "^25.6.0",
-    "@typescript-eslint/eslint-plugin": "^5.3.0",
-    "@typescript-eslint/parser": "^5.3.0",
     "@vainjs/eslint-config": "latest",
-    "commitizen": "^4.2.4",
-    "cz-conventional-changelog": "^3.3.0",
     "eslint": "^9.32.0",
-    "eslint-config-airbnb-base": "^14.2.1",
-    "eslint-plugin-import": "^2.25.3",
-    "glob": "^13.0.6",
-    "gsap": "^3.13.0",
     "husky": "^9.1.7",
-    "jest": "^29.7.0",
     "lint-staged": "^16.1.4",
-    "lodash-es": "^4.18.1",
-    "ogl": "^1.0.11",
     "prettier": "^3.6.2",
-    "tailwindcss": "^4.2.4",
-    "ts-jest": "^29.2.5",
-    "ts-node": "^10.9.1",
     "tsx": "^4.0.0",
-    "typescript": "^5.3.3",
-    "vitepress": "^1.0.0"
+    "turbo": "^2.9.6",
+    "typescript": "^5.3.3"
   },
   "packageManager": "pnpm@10.0.0"
 }
