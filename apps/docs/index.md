@@ -1,65 +1,34 @@
 ---
-layout: page
-navbar: false
+pageType: home
+
+hero:
+  name: My Site
+  text: A cool website!
+  tagline: I'm thinking...
+  actions:
+    - theme: brand
+      text: Quick Start
+      link: /experiences/架构/如何理解前端架构.html
+    - theme: alt
+      text: GitHub
+      link: https://github.com/youngluo/thinking
+features:
+  - title: Blazing fast build speed
+    details: The core compilation module is based on the Rust front-end toolchain, providing a more ultimate development experience.
+    icon: 🏃🏻‍♀️
+  - title: Support for MDX content writing
+    details: MDX is a powerful way to write content, allowing you to use React components in Markdown.
+    icon: 📦
+  - title: Built-in full-text search
+    details: Automatically generates a full-text search index for you during construction, providing out-of-the-box full-text search capabilities.
+    icon: 🎨
+  - title: AI-friendly
+    details: Generate llms.txt and Markdown files compliant with the llms.txt specification through SSG-MD, making it easier for large language models to understand and use your documentation.
+    icon: 🤖
+  - title: Static site generation
+    details: In production, it automatically builds into static HTML files, which can be easily deployed anywhere.
+    icon: 🌈
+  - title: Providing multiple custom capabilities
+    details: Through its extension mechanism, you can easily extend theme UI and build process.
+    icon: 🔥
 ---
-
-<script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
-import TextType from "./components/TextType/TextType.vue";
-import Galaxy from "./components/Galaxy/Galaxy.vue";
-
-const base = import.meta.env.BASE_URL
-</script>
-
-<div class="galaxy-wrap">
-  <Galaxy />
-  <div class="slogan" >
-    <TextType
-      text="I am thinking..."
-      as="h1"
-    />
-  </div>
-  <a :href="base + 'dashboard.html'" class="enter-btn">开始探索</a>
-</div>
-
-<style scoped>
-  .galaxy-wrap {
-    position: relative;
-    width: 100vw;
-    height: 100dvh;
-    overflow: hidden;
-    background: #000;
-  }
-  .slogan {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    pointer-events: none;
-  }
-  .slogan :deep(h1) {
-    font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    font-size: clamp(3rem, 12vw, 9rem);
-    color: #fff;
-  }
-  .enter-btn {
-    position: absolute;
-    bottom: 3rem;
-    left: 50%;
-    transform: translateX(-50%);
-    padding: 12px 32px;
-    background: rgba(255, 255, 255, 0.1);
-    border: 1px solid rgba(255, 255, 255, 0.3);
-    border-radius: 8px;
-    color: #fff;
-    text-decoration: none;
-    font-size: 1rem;
-    backdrop-filter: blur(8px);
-    transition: all 0.3s;
-  }
-  .enter-btn:hover {
-    background: rgba(255, 255, 255, 0.2);
-    border-color: rgba(255, 255, 255, 0.5);
-  }
-</style>

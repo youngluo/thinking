@@ -8,7 +8,10 @@
   function boundFn() {
     const boundFnArgs = [].slice.call(arguments)
     // 当 boundFn 通过 new 执行时，绑定当前实例
-    targetFn.apply(this instanceof boundFn ? this : boundThis, args.concat(boundFnArgs))
+    targetFn.apply(
+      this instanceof boundFn ? this : boundThis,
+      args.concat(boundFnArgs)
+    )
   }
 
   // 继承原型方法

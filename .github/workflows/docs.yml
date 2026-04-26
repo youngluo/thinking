@@ -46,13 +46,13 @@ jobs:
       - name: Generate docs
         run: pnpm docs:generate
 
-      - name: Build with VitePress
+      - name: Build with rspress
         run: pnpm docs:build
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v4
         with:
-          path: apps/docs/.vitepress/dist
+          path: apps/docs/doc_build
 
   deploy:
     environment:

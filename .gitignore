@@ -1,11 +1,20 @@
 node_modules
 *.log
 .omc
-*.local.json
 
 .turbo/
 
 dist/
 
-apps/docs/.vitepress/cache
 .playwright-mcp
+
+# Local
+.DS_Store
+*.local
+*.log*
+doc_build/
+
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea
