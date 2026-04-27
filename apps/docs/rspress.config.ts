@@ -1,3 +1,4 @@
+import { pluginNodePolyfill } from '@rsbuild/plugin-node-polyfill'
 import mermaid from 'rspress-plugin-mermaid'
 import { defineConfig } from '@rspress/core'
 import { map, size, get } from 'lodash-es'
@@ -106,6 +107,7 @@ export default defineConfig({
   base: '/thinking/',
   title: 'Thinking',
   description: '前端经验总结',
+  ssg: false,
   themeConfig: {
     nav: [
       { text: '项目经验', link: getFirstLink(experiences) },
@@ -116,11 +118,8 @@ export default defineConfig({
       '/writings/': writings,
     },
   },
-  plugins: [
-    mermaid({
-      mermaidConfig: {
-        themeCSS: 'text-align: center',
-      },
-    }),
-  ],
+  builderConfig: {
+    plugins: [pluginNodePolyfill()],
+  },
+  plugins: [mermaid()],
 })

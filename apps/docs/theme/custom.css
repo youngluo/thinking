@@ -1,0 +1,12 @@
+.rp-table-scroll-container table th:first-child,
+.rp-table-scroll-container table td:first-child {
+  white-space: nowrap;
+}
+
+.rp-doc h2 {
+  margin-top: 2.5rem;
+}
+
+.rp-doc h2::before {
+  display: none;
+}
