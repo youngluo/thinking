@@ -91,7 +91,11 @@ const experiences = getSidebar(
     },
     {
       text: '流处理',
-      items: ['API 扫盲', 'AI 应用', '大文件处理', '实时音视频'],
+      items: ['API 扫盲', '大文件处理', '实时音视频'],
+    },
+    {
+      text: 'Agent',
+      items: ['Harness'],
     },
     {
       text: 'React',
