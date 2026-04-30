@@ -83,7 +83,7 @@ const experiences = getSidebar(
   [
     {
       text: '架构',
-      items: ['如何理解前端架构'],
+      items: ['如何理解前端架构', '数据请求'],
     },
     {
       text: '监控',
@@ -101,7 +101,6 @@ const experiences = getSidebar(
       text: 'React',
       items: ['渲染机制'],
     },
-    { text: '数据请求', items: ['数据请求'] },
   ],
   'experiences'
 )
