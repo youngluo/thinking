@@ -1,9 +1,9 @@
 ---
 pageType: home
+navbar: false
 
 hero:
-  name: My Site
-  text: A cool website!
+  name: Stay Hungry. Stay Foolish.
   tagline: I'm thinking...
   actions:
     - theme: brand
