@@ -120,6 +120,7 @@ export default defineConfig({
       '/experiences/': experiences,
       '/writings/': writings,
     },
+    lastUpdated: true,
   },
   builderConfig: {
     plugins: [pluginNodePolyfill()],
