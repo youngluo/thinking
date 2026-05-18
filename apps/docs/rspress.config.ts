@@ -99,7 +99,7 @@ const experiences = getSidebar(
     },
     {
       text: 'React',
-      items: ['渲染机制'],
+      items: ['渲染机制', '调度机制'],
     },
   ],
   'experiences'
