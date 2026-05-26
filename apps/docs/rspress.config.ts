@@ -86,20 +86,24 @@ const experiences = getSidebar(
       items: ['如何理解前端架构', '数据请求'],
     },
     {
+      text: '构建工具',
+      items: ['Vite', 'Webpack', 'Rspack'],
+    },
+    {
       text: '监控',
       items: ['日志采集', '性能指标采集', '性能异常监控', '页面崩溃监控'],
     },
     {
-      text: '流处理',
-      items: ['API 扫盲', '大文件处理', '实时音视频'],
+      text: 'React',
+      items: ['渲染机制', '调度机制'],
+    },
+    {
+      text: '状态管理',
+      items: ['Zustand'],
     },
     {
       text: 'Agent',
-      items: ['Harness'],
-    },
-    {
-      text: 'React',
-      items: ['渲染机制', '调度机制'],
+      items: ['Harness', 'RAG'],
     },
   ],
   'experiences'

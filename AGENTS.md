@@ -6,7 +6,7 @@
 
 ## Project Guide
 
-This file provides guidance to coding agents working with code in this repository.
+This file provides guidance to coding agents working with code in this repository. 没有明确说明不要使用 superpowers skill。
 
 ## Commands
 
@@ -66,6 +66,12 @@ Rspress documentation at `apps/docs/`:
 - **Linting**: ESLint + Prettier via husky pre-commit
 - **Commits**: commitlint + commitizen with conventional-changelog format
 - **Documentation**: Rspress
+
+## Markdown 书写规范
+
+- 反引号 `\`` 只用于代码语义内容，例如变量名、方法名、类名、类型名、属性名、命令、路径、配置项、代码片段和 API 名称。
+- 正常名词不要使用反引号，包括普通概念、通用术语、库名、框架名和自然语言描述。
+- 同一句话里如果是“在说明某个代码标识符”，保留反引号；如果只是“在讨论一个技术概念”，使用正常文本。
 
 ## Mermaid 规范
 
