@@ -86,6 +86,10 @@ const experiences = getSidebar(
       items: ['如何理解前端架构', '数据请求'],
     },
     {
+      text: '多端',
+      items: ['浏览器原理', '微信小程序'],
+    },
+    {
       text: '构建工具',
       items: ['Vite', 'Webpack', 'Rspack'],
     },
@@ -95,15 +99,11 @@ const experiences = getSidebar(
     },
     {
       text: 'React',
-      items: ['渲染机制', '调度机制'],
-    },
-    {
-      text: '状态管理',
-      items: ['Zustand'],
+      items: ['渲染机制', '调度机制', 'Zustand'],
     },
     {
       text: 'Agent',
-      items: ['Harness', 'RAG'],
+      items: ['Harness', 'RAG', '提示词工程'],
     },
   ],
   'experiences'
