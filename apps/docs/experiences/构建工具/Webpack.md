@@ -66,7 +66,7 @@ flowchart TB
 
 这条链路可以拆成几个关键步骤。
 
-### 1、读取配置
+### 1. 读取配置
 
 Webpack 的配置描述了构建从哪里开始、如何处理模块、产物输出到哪里、哪些插件参与编译。
 
@@ -95,7 +95,7 @@ module.exports = {
 
 Webpack 的配置能力很强，因为它几乎把整个构建过程都暴露成可配置对象。代价是概念多，项目复杂后配置也容易变厚。
 
-### 2、创建 compiler
+### 2. 创建 compiler
 
 配置读取完成后，Webpack 会创建 `compiler`。可以把 `compiler` 理解成一次构建任务的总控制器。
 
@@ -121,7 +121,7 @@ class ExamplePlugin {
 
 这就是 plugin 和 loader 的第一层差异：plugin 面向构建生命周期，loader 面向单个模块源码转换。
 
-### 3、从 entry 构建模块图
+### 3. 从 entry 构建模块图
 
 Webpack 会从 `entry` 开始解析模块。
 
@@ -143,7 +143,7 @@ Webpack 会把这些 import 都视为依赖：
 
 这个过程会递归进行。入口依赖 A，A 依赖 B，B 又依赖 C，最终都会被纳入模块图。
 
-### 4、loader 转换模块
+### 4. loader 转换模块
 
 loader 解决的是“某个文件如何变成模块”。
 
@@ -191,7 +191,7 @@ module.exports = {
 
 这里 loader 只关心匹配到的模块怎么转换。它不负责全局优化，也不负责产物输出。
 
-### 5、plugin 介入生命周期
+### 5. plugin 介入生命周期
 
 plugin 解决的是“构建流程如何扩展”。
 

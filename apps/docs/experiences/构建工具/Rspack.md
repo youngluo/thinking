@@ -66,7 +66,7 @@ flowchart TB
 
 这条链路可以拆成几个关键步骤。
 
-### 1、读取配置
+### 1. 读取配置
 
 Rspack 的配置形态接近 Webpack。
 
@@ -105,7 +105,7 @@ module.exports = {
 
 这也是 Rspack 的迁移价值：如果一个项目已经是 Webpack 模型，迁移到 Rspack 通常比迁移到 Vite 更接近“替换构建引擎”。
 
-### 2、构建模块图
+### 2. 构建模块图
 
 Rspack 仍然从入口开始构建模块图。
 
@@ -126,7 +126,7 @@ import logo from './logo.png'
 
 所以 Rspack 和 Vite 的开发模型不同。Rspack 仍然是“先构建模块图，再输出 bundle”；Vite dev 则尽量保持源码模块，由浏览器按 ESM 请求。
 
-### 3、执行 loader
+### 3. 执行 loader
 
 Rspack 兼容 Webpack loader 体系。这一点很关键，因为大量历史项目的构建能力都沉淀在 loader 里。
 
@@ -153,7 +153,7 @@ style-loader(css-loader(less-loader(source)))
 
 Rspack 也提供一些内置能力，比如 `builtin:swc-loader`。如果项目只是做 JS/TS 转换，优先使用内置能力通常更快；如果项目依赖复杂的历史 loader，也可以继续复用。
 
-### 4、执行 plugin
+### 4. 执行 plugin
 
 Rspack 也提供兼容 Webpack 的插件接口，但这里要注意：loader 兼容通常更直接，plugin 兼容会更依赖具体插件使用了哪些 Webpack 内部 API。
 

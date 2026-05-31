@@ -12,7 +12,7 @@ LLM 本身只是个推理引擎，给它一个 prompt，它返回一段文字，
 
 ```mermaid
 %%{init: {'themeVariables': {'lineColor': '#7fa3ff'}}}%%
-graph TD
+graph LR
     subgraph U ["你"]
         A1["输入意图 / 审批权限 / 观察结果"]
     end
@@ -34,19 +34,16 @@ graph TD
     H -.-> L
 
     style U fill:#7fa3ff29,stroke:#07f,stroke-width:1px,rx:4,ry:4
+    style A1 fill:none,stroke:none,font-size:13px
     style H fill:#fffaf0,stroke:#ffa500,stroke-width:2px,stroke-dasharray:5,5,rx:4,ry:4
     style L fill:#7fa3ff29,stroke:#07f,stroke-width:1px,rx:4,ry:4
-    style B1 fill:#ffe0b2,stroke:none,color:#bf360c,rx:4,ry:4
-    style B2 fill:#bbdefb,stroke:none,color:#0d47a1,rx:4,ry:4
-    style B3 fill:#c8e6c9,stroke:none,color:#1b5e20,rx:4,ry:4
-    style B4 fill:#e1bee7,stroke:none,color:#4a148c,rx:4,ry:4
-    style B5 fill:#b2ebf2,stroke:none,color:#006064,rx:4,ry:4
-    style B6 fill:#ffcdd2,stroke:none,color:#b71c1c,rx:4,ry:4
-
-    classDef note fill:none,stroke:none,color:#333,font-size:13px
-
-    class A1 note;
-    class C1 note;
+    style C1 fill:none,stroke:none,font-size:13px
+    style B1 fill:#ffe0b2,stroke:#bf360c,stroke-width:1px,rx:4,ry:4
+    style B2 fill:#bbdefb,stroke:#0d47a1,stroke-width:1px,rx:4,ry:4
+    style B3 fill:#c8e6c9,stroke:#1b5e20,stroke-width:1px,rx:4,ry:4
+    style B4 fill:#e1bee7,stroke:#4a148c,stroke-width:1px,rx:4,ry:4
+    style B5 fill:#b2ebf2,stroke:#006064,stroke-width:1px,rx:4,ry:4
+    style B6 fill:#ffcdd2,stroke:#b71c1c,stroke-width:1px,rx:4,ry:4
 ```
 
 把 Harness 想象成一个"外骨骼"会更直观：LLM 是里面的大脑，负责推理和判断；Harness 是让大脑能够行动、记忆、与外界交互的整套系统。去掉 Harness，LLM 只是个聊天窗口；加上 Harness，它才能成为真正干活的 Agent。
@@ -91,12 +88,12 @@ flowchart LR
     E -- 完成 --> F
 
     style LOOP fill:#fffaf0,stroke:#ffa500,stroke-width:2px,stroke-dasharray:5,5,rx:4,ry:4
-    style A fill:#7fa3ff29,stroke:#07f,stroke-width:1px,padding:10px,rx:4,ry:4
-    style B fill:#ffe0b2,stroke:none,stroke-width:1px,color:#bf360c,rx:4,ry:4
-    style C fill:#bbdefb,stroke:none,stroke-width:1px,color:#0d47a1,rx:4,ry:4
-    style D fill:#c8e6c9,stroke:none,stroke-width:1px,color:#1b5e20,rx:4,ry:4
-    style E fill:#e1bee7,stroke:none,color:#4a148c,stroke-width:2px,rx:4,ry:4
-    style F fill:#7fa3ff29,stroke:#07f,stroke-width:1px,padding:10px,rx:4,ry:4
+    style A fill:#7fa3ff29,stroke:#07f,stroke-width:1px,rx:4,ry:4
+    style B fill:#ffe0b2,stroke:#bf360c,stroke-width:1px,rx:4,ry:4
+    style C fill:#bbdefb,stroke:#0d47a1,stroke-width:1px,rx:4,ry:4
+    style D fill:#c8e6c9,stroke:#1b5e20,stroke-width:1px,rx:4,ry:4
+    style E fill:#e1bee7,stroke:#4a148c,stroke-width:1px,rx:4,ry:4
+    style F fill:#7fa3ff29,stroke:#07f,stroke-width:1px,rx:4,ry:4
 ```
 
 Loop 的逻辑很简单：模型推理 → 调用工具 → 结果回注 → 继续推理，周而复始，直到任务完成或达到最大轮次上限。"检查是否完成"这一步通常也是模型自己判断的，它读到足够的信息后，决定停下来给出最终答案。
@@ -157,7 +154,7 @@ Bash 在这里是终极后手，图灵完备意味着任何可以程序化的操
 
 ```mermaid
 %%{init: {'themeVariables': {'lineColor': '#7fa3ff'}}}%%
-graph TD
+graph LR
     A[模型请求: Bash 'rm -rf']
     B[检查权限配置]
     C{匹配哪一级权限?}
@@ -175,10 +172,10 @@ graph TD
 
     style A fill:#7fa3ff29,stroke:#07f,stroke-width:1px,rx:4,ry:4
     style B fill:#7fa3ff29,stroke:#07f,stroke-width:1px,rx:4,ry:4
-    style C fill:#fffaf0,stroke:#ffa500,stroke-width:2px,color:#333,rx:4,ry:4
-    style D fill:#c8e6c9,stroke:#1b5e20,stroke-width:1px,color:#1b5e20,rx:4,ry:4
-    style E fill:#ffe0b2,stroke:#bf360c,stroke-width:1px,color:#bf360c,rx:4,ry:4
-    style F fill:#ffcdd2,stroke:#b71c1c,stroke-width:1px,color:#b71c1c,rx:4,ry:4
+    style C fill:#e1bee7,stroke:#4a148c,stroke-width:1px,rx:4,ry:4
+    style D fill:#c8e6c9,stroke:#1b5e20,stroke-width:1px,rx:4,ry:4
+    style E fill:#ffe0b2,stroke:#bf360c,stroke-width:1px,rx:4,ry:4
+    style F fill:#ffcdd2,stroke:#b71c1c,stroke-width:1px,rx:4,ry:4
     style G fill:#7fa3ff29,stroke:#07f,stroke-width:1px,rx:4,ry:4
     style H fill:#7fa3ff29,stroke:#07f,stroke-width:1px,rx:4,ry:4
     style I fill:#7fa3ff29,stroke:#07f,stroke-width:1px,rx:4,ry:4
@@ -255,17 +252,26 @@ Hooks 和 Tools 的根本区别：
 
 一个完整的事件流长这样：
 
-```
-模型请求：Edit file.ts
-  ↓
-PreToolUse Hook（执行前拦截）
-  → 检查目标文件是否为敏感文件
-  → 确认安全后放行
-  ↓
-执行工具：Edit
-  ↓
-PostToolUse Hook（执行后处理）
-  → 自动调用 prettier 格式化文件
+```mermaid
+%%{init: {'themeVariables': {'lineColor': '#7fa3ff'}}}%%
+flowchart LR
+    A[模型请求：Edit file.ts]
+    B[PreToolUse Hook<br>执行前拦截]
+    C[检查目标文件是否为敏感文件]
+    D[确认安全后放行]
+    E[执行工具：Edit]
+    F[PostToolUse Hook<br>执行后处理]
+    G[自动调用 prettier 格式化文件]
+
+    A --> B --> C --> D --> E --> F --> G
+
+    style A fill:#7fa3ff29,stroke:#07f,stroke-width:1px,rx:4,ry:4
+    style B fill:#ffe0b2,stroke:#bf360c,stroke-width:1px,rx:4,ry:4
+    style C fill:#bbdefb,stroke:#0d47a1,stroke-width:1px,rx:4,ry:4
+    style D fill:#c8e6c9,stroke:#1b5e20,stroke-width:1px,rx:4,ry:4
+    style E fill:#7fa3ff29,stroke:#07f,stroke-width:1px,rx:4,ry:4
+    style F fill:#b2ebf2,stroke:#006064,stroke-width:1px,rx:4,ry:4
+    style G fill:#c8e6c9,stroke:#1b5e20,stroke-width:1px,rx:4,ry:4
 ```
 
 ## Harness 解决的五个 AI 落地卡点

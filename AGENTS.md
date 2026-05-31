@@ -4,74 +4,53 @@
 
 ---
 
-## Project Guide
+## 项目指南
 
-This file provides guidance to coding agents working with code in this repository. 没有明确说明不要使用 superpowers skill。
+本文件为在此仓库中工作的编码代理提供项目指导。
 
-## Commands
+- 默认不要自动使用 superpowers skill；只有用户或项目文档明确要求时才使用。
+- 写作、修改、润色或评审文档时，必须使用 `.codex/skills/polish` skill。
+- 所有 shell 命令必须按 RTK 规则加 `rtk` 前缀。
+
+## 常用命令
 
 ```bash
-rtk pnpm test           # Run all tests (turbo)
-rtk pnpm build          # Build all packages (turbo)
-rtk pnpm docs:dev       # Start Rspress docs dev server
-rtk pnpm docs:build     # Build Rspress docs
+rtk pnpm test           # 运行全部测试（turbo）
+rtk pnpm build          # 构建所有包（turbo）
+rtk pnpm docs:dev       # 启动 Rspress 文档开发服务器
+rtk pnpm docs:build     # 构建 Rspress 文档
 ```
 
-- Single test: `rtk pnpm test --filter=@thinking/utils`
+- 单个包测试：`rtk pnpm test --filter=@thinking/utils`
 
-## Commit Rules
+## 提交规则
 
-**All commits must use the `commit` skill.** Use the `commit` skill for guided commit message creation.
+所有提交都必须使用 `commit` skill，并生成符合 Conventional Commits 的提交信息。
 
-## Architecture
+## 架构
 
-Turbo monorepo with the following structure:
+这是一个 Turbo monorepo：
 
 ```text
-├── apps/
-│   └── docs/                  # Rspress documentation site
-├── packages/
-│   ├── utils/                 # @thinking/utils - TypeScript utilities
-│   └── rc/                    # @thinking/rc - React components (empty)
-├── turbo.json                 # Build pipeline configuration
-├── pnpm-workspace.yaml        # Workspace packages definition
-└── tsconfig.base.json         # Shared TypeScript configuration
+apps/docs/                 # Rspress 文档站点
+packages/utils/            # @thinking/utils，TypeScript 工具库
+packages/rc/               # @thinking/rc，React 组件库
+turbo.json                 # 构建流水线配置
+pnpm-workspace.yaml        # 工作区包配置
+tsconfig.base.json         # 共享 TypeScript 配置
 ```
 
-### @thinking/utils
-
-Source code at `packages/utils/src/`:
+`packages/utils/src/` 按主题组织源码：
 
 ```text
-├── 算法/            # Algorithm implementations
-├── 数据结构/        # Data structure implementations
-├── 设计模式/        # Design patterns
-├── 函数式/          # Functional utilities
-└── 工具函数/        # General utilities
+算法/
+数据结构/
+设计模式/
+函数式/
+工具函数/
 ```
 
-### @thinking/docs
-
-Rspress documentation at `apps/docs/`:
-
-- Scripts: `scripts/generate-docs.ts` - Auto-generate docs from source
-- Writings: `apps/docs/writings/` - Auto-generated API documentation
-
-## Tech Stack
-
-- **Package Manager**: pnpm workspaces
-- **Build Tool**: Turborepo
-- **TypeScript**: ES2020 target, ESNext modules
-- **Testing**: Jest with ts-jest preset (in packages/utils)
-- **Linting**: ESLint + Prettier via husky pre-commit
-- **Commits**: commitlint + commitizen with conventional-changelog format
-- **Documentation**: Rspress
-
-## Markdown 书写规范
-
-- 反引号 `\`` 只用于代码语义内容，例如变量名、方法名、类名、类型名、属性名、命令、路径、配置项、代码片段和 API 名称。
-- 正常名词不要使用反引号，包括普通概念、通用术语、库名、框架名和自然语言描述。
-- 同一句话里如果是“在说明某个代码标识符”，保留反引号；如果只是“在讨论一个技术概念”，使用正常文本。
+Rspress 文档位于 `apps/docs/`。文档生成脚本是 `scripts/generate-docs.ts`，生成内容位于 `apps/docs/writings/`。
 
 ## Mermaid 规范
 
