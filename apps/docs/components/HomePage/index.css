@@ -1,0 +1,463 @@
+.thinking-home {
+  --home-ink: #111318;
+  --home-muted: #5f6673;
+  --home-soft: #8a93a3;
+  --home-line: rgba(17, 19, 24, 0.11);
+  --home-line-strong: rgba(17, 19, 24, 0.18);
+  --home-surface: rgba(255, 255, 255, 0.82);
+  --home-accent: #0f62fe;
+  --home-accent-ink: #0b4fd0;
+  --home-accent-soft: rgba(15, 98, 254, 0.08);
+  --home-shadow: rgba(42, 54, 78, 0.1);
+  position: relative;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  min-height: 100dvh;
+  overflow: hidden;
+  padding: 64px 24px 40px;
+  color: var(--home-ink);
+  background:
+    linear-gradient(90deg, rgba(17, 19, 24, 0.035) 1px, transparent 1px),
+    linear-gradient(rgba(17, 19, 24, 0.032) 1px, transparent 1px),
+    linear-gradient(155deg, #f8fafc 0%, #f1f6ff 42%, #ffffff 100%);
+  background-size:
+    80px 80px,
+    80px 80px,
+    auto;
+}
+
+.thinking-home::after {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: min(42vw, 620px);
+  height: 100%;
+  pointer-events: none;
+  content: '';
+  background:
+    linear-gradient(90deg, transparent, rgba(15, 98, 254, 0.055)),
+    repeating-linear-gradient(
+      135deg,
+      transparent 0 20px,
+      rgba(15, 98, 254, 0.075) 20px 21px,
+      transparent 21px 40px
+    );
+  mask-image: linear-gradient(90deg, transparent 0%, #000 52%);
+}
+
+.thinking-home__hero,
+.thinking-home__grid,
+.thinking-home__footer {
+  position: relative;
+  z-index: 1;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.thinking-home__hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 380px);
+  gap: clamp(28px, 6vw, 88px);
+  align-items: end;
+  width: 100%;
+  max-width: 1400px;
+  padding-top: 42px;
+}
+
+.thinking-home__hero-copy {
+  display: grid;
+  gap: 18px;
+}
+
+.thinking-home__eyebrow {
+  margin: 0;
+  width: fit-content;
+  color: var(--home-accent-ink);
+  font-size: 0.76rem;
+  font-weight: 750;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.thinking-home__title {
+  max-width: 760px;
+  margin: 0;
+  color: #171b24;
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    sans-serif;
+  font-size: clamp(3.45rem, 6.6vw, 6.65rem);
+  font-weight: 720;
+  line-height: 0.94;
+  letter-spacing: -0.052em;
+}
+
+.thinking-home__title span {
+  position: relative;
+  display: inline-block;
+  color: #255ac7;
+  font-weight: 760;
+}
+
+.thinking-home__title span::after {
+  position: absolute;
+  right: 0;
+  bottom: 0.01em;
+  left: 0.04em;
+  height: 0.12em;
+  pointer-events: none;
+  content: '';
+  background: rgba(37, 90, 199, 0.12);
+  transform: skewX(-12deg);
+}
+
+.thinking-home__intro {
+  max-width: 34rem;
+  margin: 0;
+  color: var(--home-muted);
+  font-size: 1rem;
+  line-height: 1.8;
+}
+
+.thinking-home__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 6px;
+}
+
+.thinking-home__button {
+  display: inline-flex;
+  min-height: 46px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  padding: 0 20px;
+  font-size: 0.95rem;
+  font-weight: 700;
+  text-decoration: none;
+  transition:
+    transform 180ms ease,
+    border-color 180ms ease,
+    background 180ms ease;
+}
+
+.thinking-home__button:hover {
+  transform: translateY(-1px);
+}
+
+.thinking-home__button:focus-visible,
+.thinking-home__card:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.26);
+  outline-offset: 4px;
+}
+
+.thinking-home__button--primary {
+  color: #fff;
+  background: var(--home-ink);
+  box-shadow: 0 16px 34px rgba(17, 19, 24, 0.14);
+}
+
+.thinking-home__button--secondary {
+  border: 1px solid var(--home-line);
+  color: var(--home-ink);
+  background: rgba(255, 255, 255, 0.68);
+}
+
+.thinking-home__panel {
+  position: relative;
+  display: grid;
+  gap: 20px;
+  align-self: end;
+  overflow: hidden;
+  border: 1px solid var(--home-line);
+  border-radius: 16px;
+  padding: 24px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.54), transparent 42%),
+    linear-gradient(
+      135deg,
+      rgba(255, 255, 255, 0.88),
+      rgba(255, 255, 255, 0.58)
+    ),
+    var(--home-surface);
+  box-shadow:
+    0 24px 70px rgba(42, 54, 78, 0.09),
+    inset 0 1px 0 rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(14px);
+}
+
+.thinking-home__panel::before {
+  position: absolute;
+  inset: 12px 12px auto;
+  height: 3px;
+  border-radius: 999px;
+  content: '';
+  background: linear-gradient(90deg, var(--home-accent), transparent);
+  opacity: 0.64;
+}
+
+.thinking-home__panel::after {
+  position: absolute;
+  right: -58px;
+  bottom: -86px;
+  width: 180px;
+  height: 180px;
+  border: 1px solid rgba(15, 98, 254, 0.14);
+  border-radius: 50%;
+  pointer-events: none;
+  content: '';
+  background: rgba(15, 98, 254, 0.035);
+}
+
+.thinking-home__panel-kicker {
+  position: relative;
+  z-index: 1;
+  margin-top: 12px;
+  color: var(--home-soft);
+  font-size: 0.78rem;
+  font-weight: 760;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.thinking-home__panel p {
+  position: relative;
+  z-index: 1;
+  max-width: 21rem;
+  margin: 0;
+  color: #171b24;
+  font-size: clamp(1.2rem, 1.65vw, 1.48rem);
+  font-weight: 760;
+  line-height: 1.34;
+  letter-spacing: -0.035em;
+}
+
+.thinking-home__latest-list {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--home-line);
+  border-radius: 12px;
+  background: var(--home-line);
+  list-style: none;
+}
+
+.thinking-home__latest-list li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 14px;
+  align-items: center;
+  min-height: 54px;
+  padding: 13px 14px;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.thinking-home__latest-index {
+  color: var(--home-soft);
+  font-size: 0.74rem;
+  font-weight: 780;
+  letter-spacing: 0.08em;
+}
+
+.thinking-home__latest-line {
+  display: grid;
+  gap: 8px;
+}
+
+.thinking-home__latest-line span {
+  display: block;
+  height: 9px;
+  border-radius: 999px;
+  background: rgba(17, 19, 24, 0.1);
+}
+
+.thinking-home__latest-line span:first-child {
+  width: min(100%, 15rem);
+}
+
+.thinking-home__latest-line span:last-child {
+  width: min(64%, 9rem);
+  opacity: 0.68;
+}
+
+.thinking-home__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  width: 100%;
+  margin-top: 54px;
+  overflow: hidden;
+  border: 1px solid var(--home-line);
+  border-radius: 16px;
+  background: var(--home-line);
+  box-shadow: 0 20px 56px rgba(42, 54, 78, 0.07);
+}
+
+.thinking-home__card {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 18px 22px;
+  min-height: 178px;
+  align-content: start;
+  border: 0;
+  border-radius: 0;
+  padding: 28px;
+  color: inherit;
+  background:
+    linear-gradient(
+      135deg,
+      rgba(255, 255, 255, 0.9),
+      rgba(255, 255, 255, 0.62)
+    ),
+    var(--home-surface);
+  box-shadow: none;
+  text-decoration: none;
+  transition:
+    background 180ms ease,
+    color 180ms ease;
+}
+
+.thinking-home__card::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 4px;
+  content: '';
+  background: var(--home-accent);
+  opacity: 0;
+  transition: opacity 180ms ease;
+}
+
+.thinking-home__card::after {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 3px;
+  content: '';
+  background: linear-gradient(90deg, var(--home-accent), transparent 70%);
+  opacity: 0;
+  transition: opacity 180ms ease;
+}
+
+.thinking-home__card:hover {
+  color: #0b1220;
+  background:
+    linear-gradient(
+      135deg,
+      rgba(255, 255, 255, 0.98),
+      rgba(239, 246, 255, 0.74)
+    ),
+    var(--home-surface);
+}
+
+.thinking-home__card:hover::before,
+.thinking-home__card:hover::after {
+  opacity: 0.58;
+}
+
+.thinking-home__card-index {
+  grid-row: span 2;
+  color: var(--home-accent-ink);
+  font-size: 0.86rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+}
+
+.thinking-home__card-title {
+  display: block;
+  font-size: clamp(1.42rem, 2vw, 1.9rem);
+  font-weight: 780;
+  line-height: 1.15;
+  letter-spacing: -0.035em;
+}
+
+.thinking-home__card p {
+  grid-column: 2;
+  max-width: 34em;
+  margin: 0;
+  color: var(--home-muted);
+  line-height: 1.72;
+}
+
+.thinking-home__footer {
+  align-self: end;
+  width: 100%;
+  padding-top: 42px;
+  color: var(--home-muted);
+  font-size: 0.88rem;
+  text-align: center;
+}
+
+@media (max-width: 820px) {
+  .thinking-home {
+    padding: 58px 18px 38px;
+  }
+
+  .thinking-home__hero {
+    grid-template-columns: 1fr;
+    gap: 34px;
+    padding-top: 20px;
+  }
+
+  .thinking-home__panel {
+    max-width: 460px;
+  }
+
+  .thinking-home__grid {
+    grid-template-columns: 1fr;
+    margin-top: 40px;
+  }
+}
+
+@media (max-width: 520px) {
+  .thinking-home {
+    padding-right: 14px;
+    padding-left: 14px;
+  }
+
+  .thinking-home__actions,
+  .thinking-home__button {
+    width: 100%;
+  }
+
+  .thinking-home__title {
+    font-size: clamp(2.7rem, 12.4vw, 3.6rem);
+    line-height: 0.98;
+  }
+
+  .thinking-home__card {
+    grid-template-columns: 1fr;
+  }
+
+  .thinking-home__card-index,
+  .thinking-home__card p {
+    grid-column: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thinking-home__button,
+  .thinking-home__card {
+    animation: none;
+    transition: none;
+    transform: none;
+  }
+
+  .thinking-home__button:hover,
+  .thinking-home__card:hover {
+    transform: none;
+  }
+}

@@ -115,10 +115,13 @@ export default defineConfig({
   title: 'Thinking',
   description: '前端经验总结',
   ssg: false,
+  route: {
+    exclude: ['components/**'],
+  },
   themeConfig: {
     nav: [
-      { text: '项目经验', link: getFirstLink(experiences) },
-      { text: '手写题', link: getFirstLink(writings) },
+      { text: '思考总结', link: getFirstLink(experiences) },
+      { text: '代码笔记', link: getFirstLink(writings) },
     ],
     sidebar: {
       '/experiences/': experiences,
