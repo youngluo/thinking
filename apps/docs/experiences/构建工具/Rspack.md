@@ -1,3 +1,7 @@
+---
+createdAt: "2026-05-26 20:47:14"
+---
+
 # Rspack
 
 Rspack 可以理解成“用 Rust 重新实现、并尽量兼容 Webpack 生态的高性能打包器”。

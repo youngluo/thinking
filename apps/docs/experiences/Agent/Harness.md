@@ -1,3 +1,7 @@
+---
+createdAt: "2026-04-29 21:09:52"
+---
+
 # Harness Engineering
 
 理解 Agent 系统的关键，不在于 LLM 有多强，而在于包裹它的那套基础设施，也就是 Harness。这篇文章聊聊我对 Harness Engineering 的理解，从核心概念到六大组件，最后以 Claude Code 为例看看它在实际产品里是怎么落地的。

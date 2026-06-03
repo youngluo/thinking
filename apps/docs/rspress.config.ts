@@ -2,6 +2,34 @@ import { pluginNodePolyfill } from '@rsbuild/plugin-node-polyfill'
 import mermaid from 'rspress-plugin-mermaid'
 import { defineConfig } from '@rspress/core'
 import { map, size, get } from 'lodash-es'
+import { readFileSync, readdirSync } from 'fs'
+import { dirname, join, relative, sep } from 'path'
+
+const __dirname = dirname(decodeURIComponent(new URL(import.meta.url).pathname))
+const BASE_PATH = '/thinking/'
+const EXPERIENCES_PATH = 'experiences'
+const WRITINGS_PATH = 'writings'
+const SITE_URL = 'https://youngluo.github.io'
+const SITE_ORIGIN = `${SITE_URL}${BASE_PATH}`
+const SITE_TITLE = 'Thinking'
+const SITE_DESCRIPTION =
+  '北冥有鱼的技术笔记，记录前端工程、架构实践、计算机基础与 AI Agent 的长期思考。'
+const SITE_KEYWORDS =
+  '前端工程,前端架构,React,Vue,TypeScript,JavaScript,AI Agent,LLM,计算机基础,技术笔记'
+
+function getSiteUrl(pathname = '') {
+  return new URL(pathname.replace(/^\//, ''), SITE_ORIGIN).toString()
+}
+
+function getRouteUrl(routePath: string) {
+  if (routePath === '/') {
+    return getSiteUrl()
+  }
+
+  return getSiteUrl(
+    routePath.endsWith('.html') ? routePath : `${routePath}.html`
+  )
+}
 
 function getSidebar(
   sidebars: Array<{ text: string; items: string[] }>,
@@ -27,6 +55,32 @@ type SidebarItem = ReturnType<typeof getSidebar>[number]
 function getFirstLink(sidebars: SidebarItem[]) {
   const item = sidebars[0]
   return (item.link || get(item, 'items[0].link')) as string
+}
+
+function getMarkdownFiles(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const filePath = join(dir, entry.name)
+
+    if (entry.isDirectory()) {
+      return getMarkdownFiles(filePath)
+    }
+
+    return entry.isFile() && entry.name.endsWith('.md') ? [filePath] : []
+  })
+}
+
+function getMermaidRoutePaths() {
+  return [EXPERIENCES_PATH, WRITINGS_PATH]
+    .flatMap((dir) => getMarkdownFiles(join(__dirname, dir)))
+    .filter((filePath) =>
+      readFileSync(filePath, 'utf-8').includes('```mermaid')
+    )
+    .map((filePath) => {
+      return `/${relative(__dirname, filePath)
+        .split(sep)
+        .join('/')
+        .replace(/\.md$/, '')}`
+    })
 }
 
 const writings = getSidebar(
@@ -111,12 +165,50 @@ const experiences = getSidebar(
 
 export default defineConfig({
   root: '.',
-  base: '/thinking/',
-  title: 'Thinking',
-  description: '前端经验总结',
-  ssg: false,
+  base: BASE_PATH,
+  lang: 'zh',
+  title: SITE_TITLE,
+  description: SITE_DESCRIPTION,
+  head: [
+    ['meta', { name: 'author', content: '北冥有鱼' }],
+    ['meta', { name: 'keywords', content: SITE_KEYWORDS }],
+    ['meta', { name: 'robots', content: 'index,follow' }],
+    (route) => [
+      'link',
+      { rel: 'canonical', href: getRouteUrl(route.routePath) },
+    ],
+    ['meta', { property: 'og:type', content: 'website' }],
+    ['meta', { property: 'og:site_name', content: SITE_TITLE }],
+    ['meta', { property: 'og:title', content: SITE_TITLE }],
+    ['meta', { property: 'og:description', content: SITE_DESCRIPTION }],
+    (route) => [
+      'meta',
+      { property: 'og:url', content: getRouteUrl(route.routePath) },
+    ],
+    ['meta', { property: 'og:locale', content: 'zh_CN' }],
+    ['meta', { name: 'twitter:card', content: 'summary' }],
+    ['meta', { name: 'twitter:title', content: SITE_TITLE }],
+    ['meta', { name: 'twitter:description', content: SITE_DESCRIPTION }],
+    `<script type="application/ld+json">${JSON.stringify({
+      '@context': 'https://schema.org',
+      '@type': 'WebSite',
+      name: SITE_TITLE,
+      description: SITE_DESCRIPTION,
+      url: getSiteUrl(),
+      author: {
+        '@type': 'Person',
+        name: '北冥有鱼',
+        url: 'https://github.com/youngluo',
+      },
+      inLanguage: 'zh-CN',
+      sameAs: ['https://github.com/youngluo/thinking'],
+    })}</script>`,
+  ],
+  ssg: {
+    experimentalExcludeRoutePaths: getMermaidRoutePaths(),
+  },
   route: {
-    exclude: ['components/**'],
+    exclude: ['components/**', 'doc_build/**', 'rspress.config.ts', 'theme/**'],
   },
   themeConfig: {
     nav: [

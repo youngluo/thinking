@@ -51,9 +51,6 @@ const TONES: readonly TrailTone[] = [
 ]
 const SIZES: readonly TrailSize[] = ['sm', 'md', 'md', 'lg']
 
-const clamp = (value: number, min: number, max: number) =>
-  Math.min(Math.max(value, min), max)
-
 const getLabelSeed = (label: string) => {
   return Array.from(label).reduce(
     (seed, char) => seed + char.charCodeAt(0),

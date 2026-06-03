@@ -1,6 +1,16 @@
 import type { FC } from 'react'
+import { useMemo } from 'react'
+import { usePages } from '@rspress/core/runtime'
 import { TrailCloud } from '../TrailCloud'
 import './index.css'
+
+type LatestExperience = {
+  title: string
+  href: string
+  createdAt: string
+  dateTime: string
+  createdAtMs: number
+}
 
 const TRAILS = [
   '前端架构',
@@ -79,13 +89,67 @@ const TRAILS = [
 ] as const
 
 const CURRENT_YEAR = new Date().getFullYear()
+const BASE_PATH = '/thinking/'
+const CREATED_AT_TIMEZONE = '+08:00'
+const LATEST_EXPERIENCES_LIMIT = 5
 
-const LATEST_ARTICLE_PLACEHOLDERS = Array.from(
-  { length: 5 },
-  (_, index) => index
-)
+function compareDesc(a: string, b: string) {
+  if (a === b) {
+    return 0
+  }
+
+  return a > b ? -1 : 1
+}
+
+function getCreatedAtMeta(createdAt: unknown) {
+  if (typeof createdAt !== 'string') {
+    return undefined
+  }
+
+  const createdAtMs = Date.parse(
+    `${createdAt.replace(' ', 'T')}${CREATED_AT_TIMEZONE}`
+  )
+
+  if (Number.isNaN(createdAtMs)) {
+    return undefined
+  }
+
+  return {
+    createdAt,
+    dateTime: new Date(createdAtMs).toISOString(),
+    createdAtMs,
+  }
+}
 
 export const HomePage: FC = () => {
+  const { pages } = usePages()
+  const latestExperiences = useMemo(() => {
+    return pages
+      .filter((page) => page.routePath.startsWith('/experiences/'))
+      .map((page) => {
+        const createdAt = getCreatedAtMeta(page.frontmatter.createdAt)
+
+        if (!createdAt) {
+          return undefined
+        }
+
+        return {
+          title: page.title,
+          href: `${BASE_PATH}${page.routePath.replace(/^\//, '')}.html`,
+          ...createdAt,
+        }
+      })
+      .filter((page): page is LatestExperience => page !== undefined)
+      .sort((a, b) => {
+        if (a.createdAtMs !== b.createdAtMs) {
+          return b.createdAtMs - a.createdAtMs
+        }
+
+        return compareDesc(a.href, b.href)
+      })
+      .slice(0, LATEST_EXPERIENCES_LIMIT)
+  }, [pages])
+
   return (
     <main className="thinking-home">
       <section className="thinking-home__hero">
@@ -114,23 +178,36 @@ export const HomePage: FC = () => {
           </div>
         </div>
 
-        <div className="thinking-home__panel" aria-label="最新文章预留位">
-          <span className="thinking-home__panel-kicker">Latest</span>
-          <p>最新文章</p>
-          <ol className="thinking-home__latest-list" aria-hidden="true">
-            {LATEST_ARTICLE_PLACEHOLDERS.map((index) => (
-              <li key={index}>
+        <section
+          className="thinking-home__panel"
+          aria-labelledby="thinking-home-latest-title"
+        >
+          <h2
+            className="thinking-home__panel-title"
+            id="thinking-home-latest-title"
+          >
+            最新文章
+          </h2>
+          <ol className="thinking-home__latest-list">
+            {latestExperiences.map((article, index) => (
+              <li key={article.href}>
                 <span className="thinking-home__latest-index">
                   {String(index + 1).padStart(2, '0')}
                 </span>
-                <span className="thinking-home__latest-line">
-                  <span />
-                  <span />
-                </span>
+                <a className="thinking-home__latest-link" href={article.href}>
+                  <span className="thinking-home__latest-title">
+                    {article.title}
+                  </span>
+                  {/* <time
+                    className="thinking-home__latest-date"
+                    dateTime={article.dateTime}>
+                    {article.createdAt}
+                  </time> */}
+                </a>
               </li>
             ))}
           </ol>
-        </div>
+        </section>
       </section>
 
       <TrailCloud trails={TRAILS} />
