@@ -153,7 +153,7 @@ const experiences = getSidebar(
     },
     {
       text: 'React',
-      items: ['渲染机制', '调度机制', 'Zustand'],
+      items: ['渲染机制', '调度机制', 'Reconcile', 'Zustand'],
     },
     {
       text: 'Agent',
