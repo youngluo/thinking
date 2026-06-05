@@ -9,7 +9,6 @@
 本文件为在此仓库中工作的编码代理提供项目指导。
 
 - 默认不要自动使用 superpowers skill；只有用户或项目文档明确要求时才使用。
-- 写作、修改、润色或评审文档时，必须使用 `.codex/skills/polish` skill。
 - 所有 shell 命令必须按 RTK 规则加 `rtk` 前缀。
 
 ## 常用命令

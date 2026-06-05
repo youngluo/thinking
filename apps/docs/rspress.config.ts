@@ -157,7 +157,7 @@ const experiences = getSidebar(
     },
     {
       text: 'Agent',
-      items: ['Harness', 'RAG', '提示词工程'],
+      items: ['Harness', 'RAG', 'LangChain', '提示词工程'],
     },
   ],
   'experiences'
