@@ -1,3 +1,4 @@
+import { transformerNotationErrorLevel } from '@shikijs/transformers'
 import { pluginNodePolyfill } from '@rsbuild/plugin-node-polyfill'
 import mermaid from 'rspress-plugin-mermaid'
 import { defineConfig } from '@rspress/core'
@@ -141,7 +142,7 @@ const experiences = getSidebar(
     },
     {
       text: '多端',
-      items: ['浏览器原理', '微信小程序'],
+      items: ['浏览器原理'],
     },
     {
       text: '构建工具',
@@ -158,9 +159,10 @@ const experiences = getSidebar(
     {
       text: 'Agent',
       items: [
-        'Harness',
+        'Harness Engineering 是什么',
         'RAG 是什么',
         '如何使用 LangChain 构建 RAG',
+        'SSE 和 NDJSON 指南',
         '提示词工程',
       ],
     },
@@ -230,4 +232,9 @@ export default defineConfig({
     plugins: [pluginNodePolyfill()],
   },
   plugins: [mermaid()],
+  markdown: {
+    shiki: {
+      transformers: [transformerNotationErrorLevel()],
+    },
+  },
 })
