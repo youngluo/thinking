@@ -1,5 +1,5 @@
 ---
-createdAt: '2026-06-09'
+createdAt: '2026-06-09 00:00'
 ---
 
 # SSE 和 NDJSON 指南

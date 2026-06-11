@@ -1,5 +1,5 @@
 ---
-createdAt: '2026-06-04 12:00:00'
+createdAt: '2026-06-04 12:00'
 ---
 
 # React Reconcile

@@ -1,5 +1,5 @@
 ---
-createdAt: '2026-06-05'
+createdAt: '2026-06-05 00:00'
 ---
 
 # 如何使用 LangChain 构建 RAG
