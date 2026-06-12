@@ -1,6 +1,6 @@
 import type { FC } from 'react'
 import { useMemo } from 'react'
-import { usePages } from '@rspress/core/runtime'
+import { usePages, withBase } from '@rspress/core/runtime'
 import { TrailCloud } from '../TrailCloud'
 import './index.css'
 
@@ -89,7 +89,6 @@ const TRAILS = [
 ] as const
 
 const CURRENT_YEAR = new Date().getFullYear()
-const BASE_PATH = '/thinking/'
 const CREATED_AT_TIMEZONE = '+08:00'
 const LATEST_EXPERIENCES_LIMIT = 5
 
@@ -135,7 +134,7 @@ export const HomePage: FC = () => {
 
         return {
           title: page.title,
-          href: `${BASE_PATH}${page.routePath.replace(/^\//, '')}.html`,
+          href: withBase(`${page.routePath}.html`),
           ...createdAt,
         }
       })
@@ -165,7 +164,7 @@ export const HomePage: FC = () => {
           <div className="thinking-home__actions">
             <a
               className="thinking-home__button thinking-home__button--primary"
-              href="/thinking/experiences/架构/如何理解前端架构.html"
+              href={withBase('/experiences/架构/如何理解前端架构.html')}
             >
               开始阅读
             </a>

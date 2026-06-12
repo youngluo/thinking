@@ -7,10 +7,10 @@ import { readFileSync, readdirSync } from 'fs'
 import { dirname, extname, isAbsolute, join, relative, sep } from 'path'
 
 const __dirname = dirname(decodeURIComponent(new URL(import.meta.url).pathname))
-const BASE_PATH = '/thinking/'
+const BASE_PATH = process.env.NODE_ENV === 'production' ? '/' : '/thinking/'
 const EXPERIENCES_PATH = 'experiences'
 const WRITINGS_PATH = 'writings'
-const SITE_URL = 'https://youngluo.github.io'
+const SITE_URL = 'https://thinking.youngluo.com'
 const SITE_ORIGIN = `${SITE_URL}${BASE_PATH}`
 const SITE_TITLE = 'Thinking'
 const SITE_DESCRIPTION =
@@ -275,6 +275,7 @@ const experiences = getSidebar(
         'RAG 是什么',
         '如何使用 LangChain 构建 RAG',
         'SSE 和 NDJSON 指南',
+        'Agent 应用中的流处理',
         '提示词工程',
         'SDD 实践',
       ],
