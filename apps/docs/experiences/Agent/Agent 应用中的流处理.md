@@ -42,18 +42,18 @@ request -> chunk -> chunk -> chunk -> done
 
 流处理会同时出现在浏览器和服务端。为了避免混在一起，先按运行位置拆开看。
 
-### 浏览器侧
+### 浏览器端
 
-浏览器侧关心的是：请求怎么发出去，响应体怎么一段段读出来，用户取消时怎么停掉。`fetch` 是发起请求的入口。普通请求里，我们经常这样用：
+浏览器端关心的是：请求怎么发出去，响应体怎么一段段读出来，用户取消时怎么停掉。`fetch` 是发起请求的入口。普通请求里，我们经常这样用：
 
-```ts
+```ts fold
 const response = await fetch('/api/chat')
 const data = await response.json()
 ```
 
 这表示等响应体完整回来后，再一次性解析 JSON。流式请求不能这样处理，因为响应体可能会持续返回，甚至很久都不会结束。这时要读取 `response.body`：
 
-```ts
+```ts fold
 const response = await fetch('/api/chat', {
   method: 'POST',
   body: JSON.stringify({ message: '介绍一下 RAG' }),
@@ -66,7 +66,7 @@ const stream = response.body
 
 `getReader()` 用来从 `ReadableStream` 上拿到读取器，常见写法是：
 
-```ts
+```ts fold
 const reader = response.body?.getReader()
 
 while (reader) {
@@ -79,7 +79,7 @@ while (reader) {
 
 这里的 `value` 不是字符串，而是二进制数据。浏览器不知道这些字节应该按什么编码解释，所以还需要用 `TextDecoder` 把 `Uint8Array` 解码成字符串。
 
-```ts
+```ts fold
 const decoder = new TextDecoder()
 const text = decoder.decode(value, { stream: true })
 ```
@@ -88,7 +88,7 @@ const text = decoder.decode(value, { stream: true })
 
 `TextDecoderStream` 是流式版本，可以直接把二进制流转换成文本流：
 
-```ts
+```ts fold
 const textStream = response.body?.pipeThrough(new TextDecoderStream())
 ```
 
@@ -96,7 +96,7 @@ const textStream = response.body?.pipeThrough(new TextDecoderStream())
 
 `AbortController` 用来取消请求。Agent 应用里这个能力很常见：用户可能点了"停止生成"，也可能切换页面，不再需要当前结果。
 
-```ts
+```ts fold
 const controller = new AbortController()
 
 document.querySelector('#stop')?.addEventListener('click', () => {
@@ -111,11 +111,11 @@ await fetch('/api/chat', {
 
 前端取消后，服务端也应该感知连接关闭，并尽量取消上游模型请求。否则浏览器已经不要结果了，服务端还在继续消耗 token。
 
-### Next.js 服务端侧
+### Next.js 服务端
 
 Next.js App Router 里，流式接口通常写在 Route Handler 中：
 
-```ts title="app/api/chat/route.ts"
+```ts fold title="app/api/chat/route.ts"
 export async function POST(request: Request) {
   return new Response('...')
 }
@@ -123,13 +123,13 @@ export async function POST(request: Request) {
 
 这里的 `request` 是 Web 标准的 `Request`。读取请求体可以用：
 
-```ts
+```ts fold
 const body = await request.json()
 ```
 
 如果要返回流，Route Handler 可以直接返回 `Response`，响应体放一个 `ReadableStream`。Next.js 里很常见的写法是直接创建 `ReadableStream`，在 `start` 里通过 `controller.enqueue()` 持续写入数据：
 
-```ts
+```ts fold
 const encoder = new TextEncoder()
 
 const stream = new ReadableStream({
@@ -148,14 +148,14 @@ return new Response(stream, {
 
 服务端调用上游模型接口时，也会遇到 Web Stream。现代 `fetch` 返回的 `response.body` 同样可以用 `getReader()` 读取：
 
-```ts
+```ts fold
 const response = await fetch(modelUrl)
 const reader = response.body?.getReader()
 ```
 
 如果通过 LangChain 调模型，通常会拿到可以直接 `for await` 的事件流：
 
-```ts
+```ts fold
 for await (const event of stream) {
   // event 是 LangChain 暴露的流式事件
 }
@@ -193,7 +193,7 @@ SSE 在这里只是一层"事件外壳"。大模型接口通常用它返回增�
 
 业务事件是应用真正关心的结构，比如：
 
-```ts
+```ts fold
 type AgentStreamEvent = { type: 'message'; content: string } | { type: 'tool_call'; name: string; args?: unknown } | { type: 'tool_result'; name: string; result: unknown } | { type: 'status'; message: string } | { type: 'error'; message: string } | { type: 'done' }
 ```
 
@@ -298,9 +298,9 @@ export function createSSEResponse(request: Request, produce: (controller: Readab
 - `writeSSE` 把 `event:` + `data:` + `JSON.stringify` + 编码合并成一行调用。
 - `createSSEResponse` 处理 Response 生命周期：把浏览器的取消信号透传给上游、`produce` 正常返回时自动写 `done`、抛错时自动写 `error`，最后关闭 controller。
 
-后面章节里浏览器、Next.js + 直连大模型、Next.js + LangChain，三种链路都直接使用这三个函数。
+后面章节里的示例代码都会直接使用这三个函数。
 
-## 浏览器直连大模型
+## 浏览器使用 API 接入模型
 
 第一种链路，是浏览器直接调用大模型接口。
 
@@ -320,7 +320,7 @@ flowchart LR
 
 这种方式最直接。浏览器发起请求，用 `parseSSE` 直接迭代上游 SSE 事件：
 
-```ts
+```ts fold
 import { parseSSE } from '@/lib/sse'
 
 const response = await fetch('https://model-provider.example.com/v1/chat', {
@@ -350,7 +350,7 @@ for await (const { data } of parseSSE(response.body)) {
 
 所以浏览器直连更像是理解流处理的起点，不是生产环境里的常规架构。
 
-## Next.js 中转直连
+## Next.js 使用 API 接入模型
 
 更常见的方式，是浏览器只调用自己的 Next.js 接口，由 Route Handler 再去请求大模型接口。
 
@@ -382,7 +382,7 @@ flowchart LR
 
 简化后的 Route Handler 可以写成这样：
 
-```ts title="app/api/chat/route.ts"
+```ts fold title="app/api/chat/route.ts"
 import { createSSEResponse, parseSSE, writeSSE } from '@/lib/sse'
 
 export async function POST(request: Request) {
@@ -419,11 +419,69 @@ export async function POST(request: Request) {
 
 要留意的是中转层并不是在转发原始 chunk，而是在做协议适配。上游返回 `delta`/`content`/`choices` 这些字段是供应商私有的，前端不应该依赖；中转层只把"模型说了一句话"翻译成业务事件 `event: message`，前端就和上游解耦了。`[DONE]` 是 OpenAI 风格上游用来标记"流到此为止"，遇到就 `break`，剩下的收尾交给 `createSSEResponse`。
 
-这类架构适合大多数业务里的基础版本：既保留流式体验，又把安全和协议适配放在服务端。但如果后面要接入多步 Agent、工具调用、检索结果回传，直接拼 HTTP 会让 Route Handler 越长越乱，这时换成 LangChain 这类框架更合适。
+这类架构适合大多数业务里的基础版本：既保留流式体验，又把安全和协议适配放在服务端。但如果后面要接入多步 Agent、工具调用、检索结果回传，直接拼 HTTP 会让 Route Handler 越长越乱，这时换成 SDK 或 LangChain 这类框架更合适。
 
-## Next.js 中转 LangChain
+## Next.js 使用 SDK 接入模型
 
-如果不想直接拼大模型 HTTP 接口，也可以通过 LangChain 调模型。这里先不用 Agent 和工具，只用 `ChatOpenAI` 演示最核心的模型文本流。
+如果不想手写请求体、鉴权头和分块解析，可以直接用 OpenAI 官方 Node SDK。它返回的仍然是 OpenAI 风格的流式响应，但这些细节都封装好了，业务代码只剩 `for await` 文本片段。
+
+```mermaid
+%%{init: {'themeVariables': {'lineColor': '#7fa3ff'}}}%%
+flowchart LR
+    A[浏览器] --> B[Next.js Route Handler]
+    B --> C[OpenAI SDK]
+    C --> D[大模型接口]
+    D --> C
+    C --> E[模型文本流]
+    E --> B
+    B --> F[SSE 事件]
+    F --> A
+
+    style A fill:#7fa3ff29,stroke:#07f,stroke-width:1px,rx:4,ry:4
+    style B fill:#ffe0b2,stroke:#bf360c,stroke-width:1px,rx:4,ry:4
+    style C fill:#bbdefb,stroke:#0d47a1,stroke-width:1px,rx:4,ry:4
+    style D fill:#bbdefb,stroke:#0d47a1,stroke-width:1px,rx:4,ry:4
+    style E fill:#b2ebf2,stroke:#006064,stroke-width:1px,rx:4,ry:4
+    style F fill:#c8e6c9,stroke:#1b5e20,stroke-width:1px,rx:4,ry:4
+```
+
+```ts fold title="app/api/chat/route.ts"
+import OpenAI from 'openai'
+import { createSSEResponse, writeSSE } from '@/lib/sse'
+
+const client = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+})
+
+export async function POST(request: Request) {
+  const { systemPrompt, userPrompt } = await request.json()
+
+  return createSSEResponse(request, async (controller, signal) => {
+    const stream = await client.chat.completions.create(
+      {
+        model: process.env.OPENAI_MODEL,
+        stream: true,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+      },
+      { signal }
+    )
+
+    for await (const chunk of stream) {
+      const content = chunk.choices?.[0]?.delta?.content
+      if (content) writeSSE(controller, 'message', { content })
+    }
+  })
+}
+```
+
+跟直接 fetch 相比，少了手写请求体、手写鉴权头、手写 `data:` 行解析；跟 LangChain 相比，少了 messages 类（`HumanMessage`、`SystemMessage`）的封装层。SDK 把流式响应包成 `AsyncIterable`，每个 chunk 仍然是 OpenAI 风格的 `choices[0].delta.content`，从中转层往下的"翻译成业务事件"逻辑完全保持不变。
+
+## Next.js 使用 LangChain 接入模型
+
+上面两种写法都跟单一供应商绑死。如果要换模型、加工具调用、接多步 Agent，LangChain 这类框架更合适。这里先不用这些，只用 `ChatOpenAI` 演示最核心的模型文本流。
 
 ```mermaid
 %%{init: {'themeVariables': {'lineColor': '#7fa3ff'}}}%%
@@ -447,7 +505,7 @@ flowchart LR
 
 LangChain 负责屏蔽模型供应商的调用细节，Next.js 负责把 LangChain 返回的文本 chunk 包装成浏览器能消费的 SSE。
 
-```ts title="app/api/chat/route.ts"
+```ts fold title="app/api/chat/route.ts"
 import { HumanMessage, SystemMessage } from '@langchain/core/messages'
 import { ChatOpenAI } from '@langchain/openai'
 import { createSSEResponse, writeSSE } from '@/lib/sse'
@@ -474,9 +532,9 @@ export async function POST(request: Request) {
 
 用 LangChain 后业务代码非常薄：`model.stream()` 返回模型增量输出，每个 `chunk.text`（LangChain 暴露的字符串快捷字段）直接 `writeSSE` 成 `message`。结束信号、错误处理、取消透传，全都由 `createSSEResponse` 兜底。和上一节相比，只是把"自己 fetch + 按供应商字段解析"替换成了"调一行 `model.stream()` 拿到统一事件流"，外壳没变。
 
-## 浏览器消费中转
+## 浏览器消费中转层 API
 
-当有了 Next.js 中转层，浏览器就不应该再关心后端到底是直接调用大模型接口，还是通过 LangChain 调用模型。前端只需要关心自己的业务接口返回哪些事件。
+当有了 Next.js 中转层，浏览器就不应该再关心后端到底是直接调用大模型接口，还是通过 SDK 或 LangChain 调用模型。前端只需要关心自己的业务接口返回哪些事件。
 
 Agent 流里常见的事件约定通常这样设计：
 
@@ -491,7 +549,7 @@ Agent 流里常见的事件约定通常这样设计：
 
 前端消费时，不要把所有事件都当成文本拼接。以文本流接口为例，这里只处理 `message`、`error`、`done` 三类事件：
 
-```ts
+```ts fold
 function handleAgentEvent(event: AgentStreamEvent) {
   switch (event.type) {
     case 'message':
@@ -538,7 +596,7 @@ source.addEventListener('error', (e) => {
 
 但 `EventSource` 只支持 GET，Chat 或 Agent 接口通常需要 POST body、复杂鉴权和请求上下文，这时换成 `fetch` + `parseSSE` 更灵活：
 
-```ts
+```ts fold
 import { parseSSE } from '@/lib/sse'
 
 const response = await fetch('/api/agent', {
