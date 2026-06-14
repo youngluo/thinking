@@ -304,18 +304,17 @@ export function createSSEResponse(request: Request, produce: (controller: Readab
 
 第一种链路，是浏览器直接调用大模型接口。
 
-```mermaid
-%%{init: {'themeVariables': {'lineColor': '#7fa3ff'}}}%%
-flowchart LR
-    A[浏览器] --> B[大模型接口]
-    B --> C[返回流式结果]
-    C --> A
-    A --> D[解析并渲染]
+```d2 padX=200
+direction: right
 
-    style A fill:#7fa3ff29,stroke:#07f,stroke-width:1px,rx:4,ry:4
-    style B fill:#bbdefb,stroke:#0d47a1,stroke-width:1px,rx:4,ry:4
-    style C fill:#b2ebf2,stroke:#006064,stroke-width:1px,rx:4,ry:4
-    style D fill:#c8e6c9,stroke:#1b5e20,stroke-width:1px,rx:4,ry:4
+A: 浏览器
+B: 大模型接口
+C: 文本流
+D: 渲染
+
+A -> B
+B -> C
+C -> D
 ```
 
 这种方式最直接。浏览器发起请求，用 `parseSSE` 直接迭代上游 SSE 事件：
@@ -354,21 +353,21 @@ for await (const { data } of parseSSE(response.body)) {
 
 更常见的方式，是浏览器只调用自己的 Next.js 接口，由 Route Handler 再去请求大模型接口。
 
-```mermaid
-%%{init: {'themeVariables': {'lineColor': '#7fa3ff'}}}%%
-flowchart LR
-    A[浏览器] --> B[Next.js Route Handler]
-    B --> C[大模型接口]
-    C --> D[上游流]
-    D --> B
-    B --> E[业务事件流]
-    E --> A
+```d2
+direction: right
 
-    style A fill:#7fa3ff29,stroke:#07f,stroke-width:1px,rx:4,ry:4
-    style B fill:#ffe0b2,stroke:#bf360c,stroke-width:1px,rx:4,ry:4
-    style C fill:#bbdefb,stroke:#0d47a1,stroke-width:1px,rx:4,ry:4
-    style D fill:#b2ebf2,stroke:#006064,stroke-width:1px,rx:4,ry:4
-    style E fill:#c8e6c9,stroke:#1b5e20,stroke-width:1px,rx:4,ry:4
+A: 浏览器
+B: Next.js
+C: 大模型接口
+D: 文本流
+E: 业务事件流
+F: 渲染
+
+A -> B
+B -> C
+C -> D
+D -> E
+E -> F
 ```
 
 这时 Next.js 做了几件事：
@@ -425,24 +424,19 @@ export async function POST(request: Request) {
 
 如果不想手写请求体、鉴权头和分块解析，可以直接用 OpenAI 官方 Node SDK。它返回的仍然是 OpenAI 风格的流式响应，但这些细节都封装好了，业务代码只剩 `for await` 文本片段。
 
-```mermaid
-%%{init: {'themeVariables': {'lineColor': '#7fa3ff'}}}%%
-flowchart LR
-    A[浏览器] --> B[Next.js Route Handler]
-    B --> C[OpenAI SDK]
-    C --> D[大模型接口]
-    D --> C
-    C --> E[模型文本流]
-    E --> B
-    B --> F[SSE 事件]
-    F --> A
+```d2
+direction: right
 
-    style A fill:#7fa3ff29,stroke:#07f,stroke-width:1px,rx:4,ry:4
-    style B fill:#ffe0b2,stroke:#bf360c,stroke-width:1px,rx:4,ry:4
-    style C fill:#bbdefb,stroke:#0d47a1,stroke-width:1px,rx:4,ry:4
-    style D fill:#bbdefb,stroke:#0d47a1,stroke-width:1px,rx:4,ry:4
-    style E fill:#b2ebf2,stroke:#006064,stroke-width:1px,rx:4,ry:4
-    style F fill:#c8e6c9,stroke:#1b5e20,stroke-width:1px,rx:4,ry:4
+A: 浏览器
+B: Next.js
+C: OpenAI SDK
+D: 业务事件流
+E: 渲染
+
+A -> B
+B -> C
+C -> D
+D -> E
 ```
 
 ```ts fold title="app/api/chat/route.ts"
@@ -483,24 +477,19 @@ export async function POST(request: Request) {
 
 上面两种写法都跟单一供应商绑死。如果要换模型、加工具调用、接多步 Agent，LangChain 这类框架更合适。这里先不用这些，只用 `ChatOpenAI` 演示最核心的模型文本流。
 
-```mermaid
-%%{init: {'themeVariables': {'lineColor': '#7fa3ff'}}}%%
-flowchart LR
-    A[浏览器] --> B[Next.js Route Handler]
-    B --> C[ChatOpenAI]
-    C --> D[大模型接口]
-    D --> C
-    C --> E[模型文本流]
-    E --> B
-    B --> F[SSE 事件]
-    F --> A
+```d2
+direction: right
 
-    style A fill:#7fa3ff29,stroke:#07f,stroke-width:1px,rx:4,ry:4
-    style B fill:#ffe0b2,stroke:#bf360c,stroke-width:1px,rx:4,ry:4
-    style C fill:#e1bee7,stroke:#4a148c,stroke-width:1px,rx:4,ry:4
-    style D fill:#bbdefb,stroke:#0d47a1,stroke-width:1px,rx:4,ry:4
-    style E fill:#b2ebf2,stroke:#006064,stroke-width:1px,rx:4,ry:4
-    style F fill:#c8e6c9,stroke:#1b5e20,stroke-width:1px,rx:4,ry:4
+A: 浏览器
+B: Next.js
+C: ChatOpenAI
+D: 业务事件流
+E: 渲染
+
+A -> B
+B -> C
+C -> D
+D -> E
 ```
 
 LangChain 负责屏蔽模型供应商的调用细节，Next.js 负责把 LangChain 返回的文本 chunk 包装成浏览器能消费的 SSE。

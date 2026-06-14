@@ -15,3 +15,14 @@
   max-height: 800px;
   margin: 0 auto;
 }
+
+.d2-diagram {
+  margin: 16px 0;
+  text-align: center;
+}
+
+.d2-diagram > svg {
+  width: 100%;
+  height: auto;
+  max-height: 800px;
+}

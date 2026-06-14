@@ -1,10 +1,14 @@
 import { transformerNotationErrorLevel } from '@shikijs/transformers'
 import { pluginNodePolyfill } from '@rsbuild/plugin-node-polyfill'
-import mermaid from 'rspress-plugin-mermaid'
 import { defineConfig, type RspressPlugin } from '@rspress/core'
-import { map, size, get } from 'lodash-es'
 import { readFileSync, readdirSync } from 'fs'
+import mermaid from 'rspress-plugin-mermaid'
+import { map, size, get } from 'lodash-es'
 import { dirname, extname, isAbsolute, join, relative, sep } from 'path'
+import {
+  remarkD2PreRender,
+  type D2PreRenderOptions,
+} from './plugins/d2PreRender'
 
 const __dirname = dirname(decodeURIComponent(new URL(import.meta.url).pathname))
 const BASE_PATH = process.env.NODE_ENV === 'production' ? '/' : '/thinking/'
@@ -17,6 +21,14 @@ const SITE_DESCRIPTION =
   '北冥有鱼的技术笔记，记录前端工程、架构实践、计算机基础与 AI Agent 的长期思考。'
 const SITE_KEYWORDS =
   '前端工程,前端架构,React,Vue,TypeScript,JavaScript,AI Agent,LLM,计算机基础,技术笔记'
+const d2PreRenderOptions: D2PreRenderOptions = {
+  prelude: `
+  ***.style.stroke-width: 1
+  (*** -> ***)[*]: {
+    style.stroke-width: 2
+  }
+  `,
+}
 
 function getSiteUrl(pathname = '') {
   return `${SITE_ORIGIN}${toPublicRoutePath(pathname).replace(/^\//, '')}`
@@ -332,6 +344,7 @@ export default defineConfig({
     exclude: [
       'components/**',
       'doc_build/**',
+      'plugins/**',
       'rspress.config.ts',
       'theme/**',
       ...getWhitespaceMarkdownExcludePaths(),
@@ -353,6 +366,7 @@ export default defineConfig({
   },
   plugins: [mermaid(), pluginRoutePathRewrite()],
   markdown: {
+    remarkPlugins: [[remarkD2PreRender, d2PreRenderOptions]],
     shiki: {
       transformers: [transformerNotationErrorLevel()],
     },

@@ -26,6 +26,7 @@
     "rspress.config.ts",
     "env.d.ts",
     "components",
+    "plugins",
     "theme",
     "docs",
   ],
