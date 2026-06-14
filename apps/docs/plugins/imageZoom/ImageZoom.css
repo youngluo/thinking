@@ -1,0 +1,137 @@
+.image-zoom__target {
+  cursor: zoom-in;
+}
+
+.image-zoom {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--rp-c-bg) 94%, transparent);
+  animation: image-zoom-fade-in 140ms ease-out;
+  overscroll-behavior: contain;
+  touch-action: none;
+}
+
+.image-zoom--closing {
+  pointer-events: none;
+  animation: image-zoom-fade-out 140ms ease-in forwards;
+}
+
+.image-zoom__viewport {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  cursor: zoom-out;
+  animation: image-zoom-pop-in 160ms ease-out;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.image-zoom--closing .image-zoom__viewport {
+  animation: image-zoom-pop-out 140ms ease-in forwards;
+}
+
+.image-zoom__viewport:active {
+  cursor: zoom-out;
+}
+
+.image-zoom__scene {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+}
+
+.image-zoom__scene:active {
+  cursor: grabbing;
+}
+
+.image-zoom__content {
+  display: block;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  background: var(--rp-c-bg);
+  border-radius: 4px;
+  object-fit: contain;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.image-zoom__close {
+  position: fixed;
+  top: calc(20px + env(safe-area-inset-top, 0px));
+  right: calc(20px + env(safe-area-inset-right, 0px));
+  z-index: 2;
+  display: grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border: 0;
+  border-radius: 999px;
+  padding: 0;
+  color: var(--rp-c-text-2);
+  background: transparent;
+  cursor: pointer;
+  font-size: 24px;
+  line-height: 40px;
+  transition:
+    color 140ms ease,
+    transform 140ms ease;
+  transform: translateY(-1px);
+}
+
+.image-zoom__close:hover {
+  color: var(--rp-c-text-1);
+}
+
+.image-zoom__close:active {
+  transform: translateY(-1px) scale(0.94);
+}
+
+.image-zoom__close:focus-visible {
+  outline: 2px solid var(--rp-c-brand);
+  outline-offset: 2px;
+}
+
+@keyframes image-zoom-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes image-zoom-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes image-zoom-pop-in {
+  from {
+    transform: scale(0.96);
+  }
+}
+
+@keyframes image-zoom-pop-out {
+  to {
+    transform: scale(0.98);
+  }
+}
+
+@media (max-width: 640px) {
+  .image-zoom {
+    padding: calc(16px + env(safe-area-inset-top, 0px))
+      calc(16px + env(safe-area-inset-right, 0px))
+      calc(16px + env(safe-area-inset-bottom, 0px))
+      calc(16px + env(safe-area-inset-left, 0px));
+  }
+
+  .image-zoom__close {
+    top: calc(12px + env(safe-area-inset-top, 0px));
+    right: calc(12px + env(safe-area-inset-right, 0px));
+  }
+}

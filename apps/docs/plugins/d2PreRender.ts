@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { D2, type CompileOptions } from '@terrastruct/d2'
+import type { RspressPlugin } from '@rspress/core'
 
 type MarkdownNode = {
   type?: string
@@ -290,5 +291,25 @@ async function visitD2CodeBlocks(
 export function remarkD2PreRender(options: D2PreRenderOptions = {}) {
   return async (tree: MarkdownNode, file: MarkdownFile) => {
     await visitD2CodeBlocks(tree, options, getFilePath(file), { value: 0 })
+  }
+}
+
+export function d2PreRenderPlugin(
+  options: D2PreRenderOptions = {}
+): RspressPlugin {
+  return {
+    name: 'd2-pre-render',
+    markdown: {
+      remarkPlugins: [[remarkD2PreRender, options]],
+    },
+    async afterBuild() {
+      // `@terrastruct/d2` 在 Node 端用 worker_threads 起了一个常驻 WASM
+      // worker，D2 类没有暴露 terminate()。构建结束后需要手动终止，
+      // 否则事件循环会因为 worker 句柄无法退出。
+      const worker = (
+        d2 as unknown as { worker?: { terminate?: () => Promise<unknown> } }
+      ).worker
+      await worker?.terminate?.()
+    },
   }
 }

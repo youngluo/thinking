@@ -10,6 +10,7 @@
   "dependencies": {
     "@rspress/core": "^2.0.9",
     "@terrastruct/d2": "^0.1.33",
+    "panzoom": "^9.4.4",
     "rspress-plugin-mermaid": "^1.0.1"
   },
   "devDependencies": {

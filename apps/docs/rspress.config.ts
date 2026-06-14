@@ -6,9 +6,10 @@ import mermaid from 'rspress-plugin-mermaid'
 import { map, size, get } from 'lodash-es'
 import { dirname, extname, isAbsolute, join, relative, sep } from 'path'
 import {
-  remarkD2PreRender,
+  d2PreRenderPlugin,
   type D2PreRenderOptions,
 } from './plugins/d2PreRender'
+import { pluginImageZoom } from './plugins/imageZoom'
 
 const __dirname = dirname(decodeURIComponent(new URL(import.meta.url).pathname))
 const BASE_PATH = process.env.NODE_ENV === 'production' ? '/' : '/thinking/'
@@ -363,12 +364,22 @@ export default defineConfig({
   },
   builderConfig: {
     plugins: [pluginNodePolyfill()],
+    dev: {
+      lazyCompilation: false,
+    },
   },
-  plugins: [mermaid(), pluginRoutePathRewrite()],
+  plugins: [
+    mermaid(),
+    pluginRoutePathRewrite(),
+    pluginImageZoom({
+      selector: '.rspress-doc .d2-diagram > svg',
+    }),
+    d2PreRenderPlugin(d2PreRenderOptions),
+  ],
   markdown: {
-    remarkPlugins: [[remarkD2PreRender, d2PreRenderOptions]],
     shiki: {
       transformers: [transformerNotationErrorLevel()],
     },
   },
+  mediumZoom: false,
 })
