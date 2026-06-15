@@ -32,6 +32,7 @@ type D2DiagramConfig = CompileOptions & {
 
 const d2 = new D2()
 const renderCache = new Map<string, string>()
+let d2TaskQueue: Promise<unknown> = Promise.resolve()
 
 const defaultRenderOptions: CompileOptions = {
   noXMLTag: true,
@@ -82,6 +83,13 @@ function areCompileOptionsEqual(
   secondOptions: CompileOptions
 ) {
   return JSON.stringify(firstOptions) === JSON.stringify(secondOptions)
+}
+
+function runD2Task<T>(task: () => Promise<T>) {
+  const run = d2TaskQueue.then(task, task)
+  d2TaskQueue = run.catch(() => undefined)
+
+  return run
 }
 
 function addSvgPadX(svg: string, padX?: number) {
@@ -223,15 +231,17 @@ async function renderD2(
       return cached
     }
 
-    const { options: compileOptions, result } = await resolveCompileOptions(
-      prepared.code,
-      prepared.options,
-      cacheKey.slice(0, 12)
-    )
+    const svg = await runD2Task(async () => {
+      const { options: compileOptions, result } = await resolveCompileOptions(
+        prepared.code,
+        prepared.options,
+        cacheKey.slice(0, 12)
+      )
 
-    const svg = await d2.render(result.diagram, {
-      ...result.renderOptions,
-      ...compileOptions,
+      return d2.render(result.diagram, {
+        ...result.renderOptions,
+        ...compileOptions,
+      })
     })
     const normalizedSvg = addSvgPadX(svg, prepared.padX)
 

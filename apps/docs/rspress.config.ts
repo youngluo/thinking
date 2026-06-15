@@ -19,11 +19,26 @@ const SITE_URL = 'https://thinking.youngluo.com'
 const SITE_ORIGIN = `${SITE_URL}${BASE_PATH}`
 const SITE_TITLE = 'Thinking'
 const SITE_DESCRIPTION =
-  '北冥有鱼的技术笔记，记录前端工程、架构实践、计算机基础与 AI Agent 的长期思考。'
+  '我叫阿良的技术笔记，记录前端工程、架构实践、计算机基础与 AI Agent 的长期思考。'
 const SITE_KEYWORDS =
   '前端工程,前端架构,React,Vue,TypeScript,JavaScript,AI Agent,LLM,计算机基础,技术笔记'
 const d2PreRenderOptions: D2PreRenderOptions = {
   prelude: `
+  classes: {
+    group: {
+      style.fill: "#fffaf0"
+    }
+    fail: {
+      style.fill: "#ffcdd2"
+    }
+    ok: {
+      style.fill: "#c8e6c9"
+    }
+    decision: {
+      style.fill: "#e1bee7"
+    }
+  }
+
   ***.style.stroke-width: 1
   (*** -> ***)[*]: {
     style.stroke-width: 2
@@ -304,7 +319,7 @@ export default defineConfig({
   title: SITE_TITLE,
   description: SITE_DESCRIPTION,
   head: [
-    ['meta', { name: 'author', content: '北冥有鱼' }],
+    ['meta', { name: 'author', content: '我叫阿良' }],
     ['meta', { name: 'keywords', content: SITE_KEYWORDS }],
     ['meta', { name: 'robots', content: 'index,follow' }],
     (route) => [
@@ -331,7 +346,7 @@ export default defineConfig({
       url: getSiteUrl(),
       author: {
         '@type': 'Person',
-        name: '北冥有鱼',
+        name: '我叫阿良',
         url: 'https://github.com/youngluo',
       },
       inLanguage: 'zh-CN',

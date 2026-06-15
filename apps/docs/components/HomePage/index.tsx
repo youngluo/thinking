@@ -212,7 +212,7 @@ export const HomePage: FC = () => {
       <TrailCloud trails={TRAILS} />
 
       <footer className="thinking-home__footer">
-        <span>© {CURRENT_YEAR} 北冥有鱼</span>
+        <span>© {CURRENT_YEAR} 我叫阿良</span>
       </footer>
     </main>
   )
