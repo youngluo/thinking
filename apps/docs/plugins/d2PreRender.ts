@@ -312,7 +312,11 @@ export function d2PreRenderPlugin(
     markdown: {
       remarkPlugins: [[remarkD2PreRender, options]],
     },
-    async afterBuild() {
+    async afterBuild(_config, isProd) {
+      if (!isProd) {
+        return
+      }
+
       // `@terrastruct/d2` 在 Node 端用 worker_threads 起了一个常驻 WASM
       // worker，D2 类没有暴露 terminate()。构建结束后需要手动终止，
       // 否则事件循环会因为 worker 句柄无法退出。
