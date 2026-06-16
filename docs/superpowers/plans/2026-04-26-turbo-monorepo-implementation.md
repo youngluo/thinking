@@ -21,7 +21,7 @@ thinking/
 │       ├── .vitepress/
 │       ├── components/
 │       ├── experiences/
-│       ├── writings/
+│       ├── code/
 │       └── scripts/
 │           └── generate-docs.ts
 ├── packages/

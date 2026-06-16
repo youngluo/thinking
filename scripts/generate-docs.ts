@@ -11,7 +11,7 @@ import { fileURLToPath } from 'url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const rootDir = join(__dirname, '..')
-const docsDir = join(rootDir, 'apps/docs/writings')
+const docsDir = join(rootDir, 'apps/docs/code')
 const srcDir = join(rootDir, 'packages/utils/src')
 
 interface FunctionDoc {

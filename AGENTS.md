@@ -105,7 +105,7 @@ tsconfig.base.json         # 共享 TypeScript 配置
 工具函数/
 ```
 
-Rspress 文档位于 `apps/docs/`。文档生成脚本是 `scripts/generate-docs.ts`，生成内容位于 `apps/docs/writings/`。
+Rspress 文档位于 `apps/docs/`。文档生成脚本是 `scripts/generate-docs.ts`，生成内容位于 `apps/docs/code/`。
 
 修改 `apps/docs/` 中的 Rspress 相关内容时，可参考 Rspress 官方 LLM 文档：
 

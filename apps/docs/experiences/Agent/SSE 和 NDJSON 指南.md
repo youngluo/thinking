@@ -1,5 +1,6 @@
 ---
 createdAt: '2026-06-09 00:00'
+order: 5
 ---
 
 # SSE 和 NDJSON 指南

@@ -1,5 +1,6 @@
 ---
-createdAt: '2026-05-26 20:47'
+createdAt: '2026-05-27 20:47'
+draft: true
 ---
 
 # Rspack
@@ -311,16 +312,16 @@ flowchart TB
 
 Rspack 最重要的定位，是兼容 Webpack 生态并提升性能。
 
-| 维度 | Webpack | Rspack |
-| --- | --- | --- |
-| 核心实现 | JavaScript / Node.js | Rust 内核 |
-| 构建模型 | 从 entry 构建模块图并输出 bundle | 同样构建模块图并输出 bundle |
-| 配置 | Webpack 配置体系 | 尽量兼容 Webpack 配置 |
-| Loader | Webpack loader 生态 | 兼容 Webpack loader，并提供内置 loader |
-| Plugin | 插件生态最成熟 | 兼容主流插件，但深度插件需验证 |
-| HMR | 基于 runtime 和 hot update chunk | 模型接近 Webpack，但增量编译更快 |
-| 迁移成本 | 原生方案 | 通常低于迁移到 Vite |
-| 适用场景 | 高度定制、生态最完整 | 想保留 Webpack 模型但提升性能 |
+| 维度     | Webpack                          | Rspack                                 |
+| -------- | -------------------------------- | -------------------------------------- |
+| 核心实现 | JavaScript / Node.js             | Rust 内核                              |
+| 构建模型 | 从 entry 构建模块图并输出 bundle | 同样构建模块图并输出 bundle            |
+| 配置     | Webpack 配置体系                 | 尽量兼容 Webpack 配置                  |
+| Loader   | Webpack loader 生态              | 兼容 Webpack loader，并提供内置 loader |
+| Plugin   | 插件生态最成熟                   | 兼容主流插件，但深度插件需验证         |
+| HMR      | 基于 runtime 和 hot update chunk | 模型接近 Webpack，但增量编译更快       |
+| 迁移成本 | 原生方案                         | 通常低于迁移到 Vite                    |
+| 适用场景 | 高度定制、生态最完整             | 想保留 Webpack 模型但提升性能          |
 
 所以 Rspack 不是“另一个 Vite”。它更像 Webpack 的高性能替代实现。
 
@@ -338,14 +339,14 @@ Rspack 最重要的定位，是兼容 Webpack 生态并提升性能。
 
 Rspack 和 Vite 都追求更好的开发体验，但路线不同。
 
-| 维度 | Vite | Rspack |
-| --- | --- | --- |
-| 开发模型 | 原生 ESM 模块服务 | 高性能 bundle 构建 |
-| 启动方式 | 先启动 dev server，源码按需转换 | 先构建模块图，再服务 bundle |
-| 依赖处理 | 依赖预构建，源码按需转换 | 依赖和源码都进入构建图 |
-| HMR | 浏览器重新 import 更新模块 | 生成 hot update 并由 runtime 应用 |
-| 生态定位 | 现代 ESM 项目的开发体验 | Webpack 生态的性能升级 |
-| 迁移对象 | 更适合新项目或现代项目 | 更适合 Webpack 存量项目 |
+| 维度     | Vite                            | Rspack                            |
+| -------- | ------------------------------- | --------------------------------- |
+| 开发模型 | 原生 ESM 模块服务               | 高性能 bundle 构建                |
+| 启动方式 | 先启动 dev server，源码按需转换 | 先构建模块图，再服务 bundle       |
+| 依赖处理 | 依赖预构建，源码按需转换        | 依赖和源码都进入构建图            |
+| HMR      | 浏览器重新 import 更新模块      | 生成 hot update 并由 runtime 应用 |
+| 生态定位 | 现代 ESM 项目的开发体验         | Webpack 生态的性能升级            |
+| 迁移对象 | 更适合新项目或现代项目          | 更适合 Webpack 存量项目           |
 
 可以这样概括：
 
