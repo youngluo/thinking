@@ -1,5 +1,5 @@
 import type { RspressPlugin } from '@rspress/core'
-import { readFileSync, readdirSync } from 'fs'
+import { existsSync, readFileSync, readdirSync } from 'fs'
 import { dirname, extname, isAbsolute, join, relative, sep } from 'path'
 
 const DOCS_ROOT = dirname(
@@ -17,6 +17,10 @@ function toPublicRoutePath(pathname: string) {
 }
 
 function getMarkdownFiles(dir: string): string[] {
+  if (!existsSync(dir)) {
+    return []
+  }
+
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const filePath = join(dir, entry.name)
 

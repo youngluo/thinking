@@ -6,6 +6,7 @@ import {
   d2PreRenderPlugin,
   type D2PreRenderOptions,
 } from './plugins/d2PreRender'
+import { pluginCodeDocs } from './plugins/codeDocs'
 import { pluginImageZoom } from './plugins/imageZoom'
 import { pluginRoutePathRewrite } from './plugins/routePathRewrite'
 import {
@@ -15,8 +16,8 @@ import {
   getFirstLink,
   getGeneratedSidebar,
   getMermaidRoutePaths,
-  getRouteUrl,
   getSiteUrl,
+  getRouteUrl,
   getWhitespaceMarkdownExcludePaths,
 } from './utils'
 
@@ -31,11 +32,11 @@ const SITE_KEYWORDS =
 const SIDEBAR_GROUP_ORDERS: Record<string, string[]> = {
   [EXPERIENCES_PATH]: [
     '架构',
-    '多端',
-    '性能监控',
+    '浏览器原理',
     '构建工具',
     'React',
     'Agent',
+    '性能优化与监控',
   ],
   [CODE_PATH]: ['算法', '设计模式', '数据结构', '函数式', '工具函数'],
 }
@@ -63,7 +64,6 @@ const d2PreRenderOptions: D2PreRenderOptions = {
   `,
 }
 
-const code = getGeneratedSidebar(CODE_PATH, SIDEBAR_GROUP_ORDERS)
 const experiences = getGeneratedSidebar(EXPERIENCES_PATH, SIDEBAR_GROUP_ORDERS)
 
 export default defineConfig({
@@ -126,13 +126,9 @@ export default defineConfig({
     ],
   },
   themeConfig: {
-    nav: [
-      { text: '思考总结', link: getFirstLink(experiences) },
-      { text: '代码笔记', link: getFirstLink(code) },
-    ],
+    nav: [{ text: '思考总结', link: getFirstLink(experiences) }],
     sidebar: {
       '/experiences/': experiences,
-      '/code/': code,
     },
     // lastUpdated: true,
   },
@@ -144,6 +140,9 @@ export default defineConfig({
   },
   plugins: [
     mermaid(),
+    pluginCodeDocs({
+      sidebarGroupOrder: SIDEBAR_GROUP_ORDERS[CODE_PATH],
+    }),
     pluginRoutePathRewrite(),
     pluginImageZoom({
       selector: '.rspress-doc .d2-diagram > svg',

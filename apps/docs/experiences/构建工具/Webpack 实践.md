@@ -318,76 +318,43 @@ MF 的难点不在这几行配置，而在运行时边界。remoteEntry 加载�
 
 ## 实践
 
-生产环境的 Webpack 配置目标很明确：资源要小，缓存要稳，加载要快，构建要可维护。
+生产环境的 Webpack 配置目标很明确：资源要小，缓存要稳，加载要快，构建也要快。
 
-实践上最重要的是五件事：
+实践上最重要的是六件事：
 
-- 分包策略：哪些代码应该放在一起，哪些代码应该拆开。
+- 排查与基线：先看清当前构建和产物的真实状态，再决定优化点。
 - Tree Shaking：哪些代码根本不应该进入最终产物。
+- 分包策略：哪些代码应该放在一起，哪些代码应该拆开。
 - 缓存策略：哪些资源可以长期缓存，哪些资源必须及时更新。
 - 构建提速：减少重复工作，缩小编译范围，把重活交给更快的工具。
 - MF 取舍：是否真的需要运行时跨应用共享模块。
 
-### 生产分包策略
+### 排查思路
 
-分包的目标不是“拆出更多文件”，而是同时服务首屏加载和缓存命中。一个比较稳的判断标准是：变化频率接近的代码放在一起，加载时机不同的代码拆开。
+排查是实践的第一步。看不清构建和产物的真实状态，就去调 splitChunks、加缓存、堆多线程，往往是配置越改越复杂、收益越来越小。先建基线，再动配置。
 
-常见拆分方式是：
+常用手段包括：
 
-| 分包       | 内容                           | 目标                       |
-| ---------- | ------------------------------ | -------------------------- |
-| 入口包     | 当前入口必须执行的业务代码     | 保证首屏可运行             |
-| 异步业务包 | 路由页、弹窗、低频功能         | 降低首屏体积               |
-| vendor 包  | React、Vue、组件库等第三方依赖 | 利用依赖低频变化做长期缓存 |
-| runtime 包 | Webpack runtime 和 manifest    | 降低 hash 传染             |
-| 公共包     | 多个异步 chunk 共享的业务模块  | 避免重复打包               |
+- 用 `webpack-bundle-analyzer` 看哪些依赖占体积，是否存在重复依赖。
+- 用 `stats.json` 看 chunk、module、asset 的关系。
+- 对比两次构建的文件名和 hash，确认缓存是否稳定。
+- 检查 Tree Shaking 是否被 CommonJS、错误副作用声明或导入方式影响。
+- 检查 `node_modules` 里是否混入多个版本的大依赖。
+- 检查 source map 是否被错误发布到公网。
+- 用浏览器 Network 面板确认首屏请求数量、资源大小和缓存命中。
+- 如果用了 MF，单独检查 remoteEntry 加载、shared 版本协商和 remote 失败兜底。
 
-基础配置通常会包含：
+生成 stats 的方式通常是：
 
-```js title="webpack.config.js"
-module.exports = {
-  output: {
-    filename: 'static/js/[name].[contenthash:8].js',
-    chunkFilename: 'static/js/[name].[contenthash:8].chunk.js',
-    clean: true,
-  },
-  optimization: {
-    runtimeChunk: 'single',
-    splitChunks: {
-      chunks: 'all',
-      minSize: 20 * 1024,
-      maxInitialRequests: 6,
-      maxAsyncRequests: 10,
-      cacheGroups: {
-        vendor: {
-          test: /[\\/]node_modules[\\/]/,
-          name: 'vendors',
-          priority: 10,
-        },
-        common: {
-          minChunks: 2,
-          name: 'common',
-          priority: 0,
-          reuseExistingChunk: true,
-        },
-      },
-    },
-  },
-}
+```bash title="terminal"
+webpack --profile --json > stats.json
 ```
 
-这里的重点不是照抄参数，而是理解每个参数背后的取舍。`chunks: 'all'` 会同时处理同步和异步 chunk，适合多数中大型应用；`runtimeChunk: 'single'` 可以把运行时代码单独拆出，减少 runtime 变化影响业务包 hash；vendor 不宜无限细拆，过细会增加请求数量和调度成本，过粗又会导致一个依赖变化让整个 vendor 失效。
+如果发现 chunk 过大，优先判断是不是低频功能没有动态导入，或者某个重依赖进入了首屏入口。如果发现 chunk 过碎，优先看 splitChunks 是否过于激进，或者公共模块体积太小却被频繁抽离。
 
-路由级动态导入通常是收益最稳定的分包方式：
+如果发现 vendor hash 经常变化，优先看 runtime 是否独立、module id 是否稳定、构建输入是否包含时间戳或环境随机值。如果发现 Tree Shaking 没效果，优先看依赖产物格式和 sideEffects 声明，而不是继续拆 chunk。
 
-```js title="src/router.js"
-const SettingsPage = () => import('./pages/settings')
-const ReportPage = () => import('./pages/report')
-```
-
-动态导入适合低频、重型、非首屏模块，例如后台报表、编辑器、地图、图表库、管理页。首屏必须用到的小模块不要强行动态导入，否则会让页面多一次网络瀑布流。
-
-### Tree Shaking 落地
+### Tree Shaking
 
 Tree Shaking 要放在分包之前理解：分包决定代码放在哪个 chunk，Tree Shaking 决定未使用代码是否应该进入任何 chunk。
 
@@ -421,6 +388,65 @@ Tree Shaking 排查可以按这个顺序：
 - 最后用 bundle analyzer 看无用模块是否仍然进入产物。
 
 Tree Shaking 不会解决所有体积问题。大依赖如果真的被首屏使用，就算摇树正常，也仍然应该考虑按需加载、替换依赖或延后加载。
+
+### 分包策略
+
+分包的目标不是“拆出更多文件”，而是同时服务首屏加载和缓存命中。一个比较稳的判断标准是：变化频率接近的代码放在一起，加载时机不同的代码拆开。
+
+常见拆分方式是：
+
+| 分包       | 内容                           | 目标                       |
+| ---------- | ------------------------------ | -------------------------- |
+| 入口包     | 当前入口必须执行的业务代码     | 保证首屏可运行             |
+| 异步业务包 | 路由页、弹窗、低频功能         | 降低首屏体积               |
+| vendor 包  | React、Vue、组件库等第三方依赖 | 利用依赖低频变化做长期缓存 |
+| runtime 包 | Webpack runtime 和 manifest    | 降低 hash 传染             |
+| 公共包     | 多个异步 chunk 共享的业务模块  | 避免重复打包               |
+
+基础配置通常会包含：
+
+```js title="webpack.config.js"
+module.exports = {
+  output: {
+    filename: 'static/js/[name].[contenthash:8].js',
+    chunkFilename: 'static/js/[name].[contenthash:8].chunk.js',
+    clean: true,
+  },
+  optimization: {
+    runtimeChunk: 'single', // 单独拆出 runtime，缩小其变化对业务包 hash 的影响
+    splitChunks: {
+      chunks: 'all', // 同步与异步 chunk 一起参与分包
+      minSize: 20 * 1024, // 20KB 以下不单独拆，避免小请求爆炸
+      maxInitialRequests: 6, // 入口包请求数上限，超出后会被合并回大块
+      maxAsyncRequests: 10, // 异步加载请求数上限，超出后会被合并
+      cacheGroups: {
+        vendor: {
+          test: /[\\/]node_modules[\\/]/,
+          name: 'vendors',
+          priority: 10, // 比 common 优先；命中 vendor 后就不再走 common
+        },
+        common: {
+          minChunks: 2, // 至少被 2 个 chunk 共享才拆出来
+          name: 'common',
+          priority: 0,
+          reuseExistingChunk: true, // 已有可复用 chunk 时直接复用，不再重复拆
+        },
+      },
+    },
+  },
+}
+```
+
+这里的重点不是照抄参数，而是理解每个参数背后的取舍。例如 vendor 不宜无限细拆，过细会增加请求数量和调度成本，过粗又会导致一个依赖变化让整个 vendor 失效。
+
+路由级动态导入通常是收益最稳定的分包方式：
+
+```js title="src/router.js"
+const SettingsPage = () => import('./pages/settings')
+const ReportPage = () => import('./pages/report')
+```
+
+动态导入适合低频、重型、非首屏模块，例如后台报表、编辑器、地图、图表库、管理页。首屏必须用到的小模块不要强行动态导入，否则会让页面多一次网络瀑布流。
 
 ### 缓存策略
 
@@ -470,22 +496,70 @@ module.exports = {
 
 Webpack 慢通常不是一个开关能解决的。要先判断慢在哪里：模块解析慢、loader 转换慢、压缩慢、source map 慢、插件慢，还是文件监听慢。没有基线就直接调参数，很容易把配置调复杂但收益很小。
 
-第一步是打开持久化缓存：
+凭感觉改配置是常见浪费，最快的定位办法是把每个 loader 和 plugin 的耗时打出来：
 
 ```js title="webpack.config.js"
+const SpeedMeasurePlugin = require('speed-measure-webpack-plugin')
+
+const smp = new SpeedMeasurePlugin()
+
+module.exports = smp.wrap({
+  // ...原有配置
+})
+```
+
+或者直接用 Webpack 自带的 profile：
+
+```bash title="terminal"
+webpack --profile --json > stats.json
+```
+
+`stats.json` 的具体解读在「排查思路」一节有更细的说明。拿到耗时分布后，按「解析 → 转译 → 压缩 → 缓存」这个顺序逐项优化，跳过前面直接调后面的配置往往收益很小。
+
+**解析阶段**经常被低估。`resolve.alias` 把深层路径替换成短路径，省掉从 `package.json` 入口一路 resolve 的成本，也避免 monorepo 内部包出现多版本歧义：
+
+```js title="webpack.config.js"
+const path = require('path')
+
 module.exports = {
-  cache: {
-    type: 'filesystem',
-    buildDependencies: {
-      config: [__filename],
+  resolve: {
+    alias: {
+      '@': path.resolve(__dirname, 'src'),
     },
+    modules: [path.resolve(__dirname, 'src'), 'node_modules'],
+    extensions: ['.js', '.jsx', '.ts', '.tsx'],
   },
 }
 ```
 
-持久化缓存能减少重复构建成本，尤其适合本地开发和 CI 缓存命中场景。但缓存不能掩盖配置问题：如果 loader 匹配范围过大，或者每次构建都引入不稳定输入，缓存收益会下降。
+`extensions` 列表越短越快，但要和实际文件后缀匹配，不要把不存在的后缀放进去。`noParse` 告诉 Webpack 某个库不需要走 parser，前提是它没有 `require` 或 `import` 也没有 AMD 依赖：
 
-第二步是缩小 loader 处理范围：
+```js title="webpack.config.js"
+module.exports = {
+  module: {
+    noParse: /jquery|lodash/,
+  },
+}
+```
+
+`IgnorePlugin` 则让某些模块整体不进入依赖图，适合砍掉 moment 这类多 locale 资源：
+
+```js title="webpack.config.js"
+const webpack = require('webpack')
+
+module.exports = {
+  plugins: [
+    new webpack.IgnorePlugin({
+      resourceRegExp: /^\.\/locale$/,
+      contextRegExp: /moment$/,
+    }),
+  ],
+}
+```
+
+这些配置不会减少业务代码，但能把「node_modules 里那些你根本没用到的部分」从依赖图里直接拿掉，常见能省几秒到几十秒。
+
+**loader 范围**的原则是只处理需要处理的源码：
 
 ```js title="webpack.config.js"
 const path = require('path')
@@ -503,19 +577,39 @@ module.exports = {
 }
 ```
 
-核心原则是：只处理需要处理的源码，不让 Babel、SWC、TypeScript loader 扫完整个仓库或 `node_modules`。
+不要让 Babel、SWC、TypeScript loader 扫完整个仓库或 `node_modules`。loader 链能不引入就不引入，能合并就合并。
 
-第三步是减少重型转换。现代项目里可以考虑用 `swc-loader` 或 `esbuild-loader` 替代部分 Babel 转换；TypeScript 类型检查和转译拆开，构建时只转译，类型检查交给 `fork-ts-checker-webpack-plugin` 或独立命令；生产压缩使用 SWC、esbuild 或并行压缩能力，避免单线程压缩成为瓶颈。
+**转译器选择**直接影响 CPU 占用。现代项目里可以用 `swc-loader` 或 `esbuild-loader` 替代部分 Babel 转换；TypeScript 类型检查和转译拆开，构建时只转译，类型检查交给 `fork-ts-checker-webpack-plugin` 或独立命令。loader 这层能省的时间往往比想象中多，老项目的 Babel 链是常见的隐形瓶颈。
 
-source map 也会明显影响速度和产物大小：
+**压缩和 source map** 是生产构建的隐性成本。`TerserPlugin` 默认配置不一定利用多核：
+
+```js title="webpack.config.js"
+const TerserPlugin = require('terser-webpack-plugin')
+
+module.exports = {
+  optimization: {
+    minimize: true,
+    minimizer: [
+      new TerserPlugin({
+        parallel: true,
+        terserOptions: {
+          compress: { passes: 1 },
+        },
+      }),
+    ],
+  },
+}
+```
+
+`parallel: true` 让压缩跑满多核；`compress.passes` 默认是 1，再往上加收益递减但时间翻倍，除非有明确体积收益要求，否则不要轻易调到 2 或 3。CSS 压缩同样可以用 `css-minimizer-webpack-plugin` 配合并行选项。
+
+source map 选择和构建速度强相关：
 
 ```js title="webpack.config.js"
 module.exports = {
   devtool: process.env.NODE_ENV === 'production' ? 'source-map' : 'eval-cheap-module-source-map',
 }
 ```
-
-常见选择是：
 
 | 场景         | devtool                                  |
 | ------------ | ---------------------------------------- |
@@ -524,7 +618,37 @@ module.exports = {
 | 生产错误定位 | `source-map`，但上传到监控平台或限制访问 |
 | 极致构建速度 | 关闭生产 source map，或只在需要时开启    |
 
-`thread-loader` 不是必选项。它适合非常重的 loader 链，但线程启动、进程通信和缓存管理也有成本。如果模块数量少或转换本身已经很快，盲目开启反而可能变慢。
+**持久化缓存**是减少重复构建的关键：
+
+```js title="webpack.config.js"
+module.exports = {
+  cache: {
+    type: 'filesystem',
+    buildDependencies: {
+      config: [__filename],
+    },
+  },
+}
+```
+
+`cache: { type: 'filesystem' }` 看上去简单，但「缓存能否命中」依赖一些细节。`cacheDirectory` 要选一个稳定且不会被 `git clean` 误删的目录；`buildDependencies` 把影响产物的配置和脚本都列上，否则这些文件改了 Webpack 不会重置缓存。pnpm 项目里 `node_modules` 是符号链接结构，`managedPaths` 默认识别正确；yarn pnp 或自定义 hoisting 场景下可能要显式声明 `immutablePaths` 和 `managedPaths`，否则缓存键会包含 `node_modules` 内容，命中率急剧下降。
+
+**CI 上 filesystem cache 默认是失效的**：每次 runner 重建，缓存目录就被清空。要让 CI 也拿到「二次构建秒开」的体验，需要把缓存目录作为 CI artifact 跨 job 复用：
+
+```yaml title=".github/workflows/build.yml"
+- name: Cache Webpack
+  uses: actions/cache@v4
+  with:
+    path: .webpack-cache
+    key: webpack-${{ hashFiles('package-lock.json') }}-${{ github.ref }}
+    restore-keys: webpack-${{ hashFiles('package-lock.json') }}-
+```
+
+`key` 用 `package-lock.json` 的 hash 是因为 `node_modules` 变化时产物几乎必然变化；`restore-keys` 用来在 lockfile 变了之后还能复用一部分旧缓存。`node_modules` 本身的缓存可以单独用 `actions/setup-node` 的 `cache: 'pnpm'` 或类似机制处理，不要和 Webpack cache 混在一起。
+
+**dev 二次构建**的瓶颈和首次构建不同。HMR 那一节讲过，热更新慢通常不是 dev server 通知慢，而是受影响模块重新编译慢。dev 环境可以单独写一份 loader 配置，比 prod 更激进：限制 loader 范围、关闭不必要的 source map 精度、用持久化缓存复用未变化模块。
+
+`thread-loader` 不一定适合 dev：线程启动、进程通信和缓存管理也有成本，模块数量少或转换本身已经很快时，盲目开启反而可能变慢。判断标准是单个 loader 处理一个模块超过几十毫秒，且模块数量足够多，开 thread-loader 才有意义。
 
 ### 微前端与 MF 取舍
 
@@ -563,31 +687,6 @@ new ModuleFederationPlugin({
 
 MF 的发布也要按运行时系统来设计。remote 加载失败时，host 要能展示降级 UI；remote 抛错时，要有错误边界隔离；remoteEntry 缓存策略要能支持回滚；监控里要能区分是 host 错误、remote 错误，还是共享依赖版本错误。
 
-### 排查构建和产物问题
-
-Webpack 优化最好先量化，再调整。没有数据时，常见误区是把 splitChunks 调得越来越复杂，或者盲目加缓存和多线程，最后构建链路更难维护。
-
-常用手段包括：
-
-- 用 `webpack-bundle-analyzer` 看哪些依赖占体积，是否存在重复依赖。
-- 用 `stats.json` 看 chunk、module、asset 的关系。
-- 对比两次构建的文件名和 hash，确认缓存是否稳定。
-- 检查 Tree Shaking 是否被 CommonJS、错误副作用声明或导入方式影响。
-- 检查 `node_modules` 里是否混入多个版本的大依赖。
-- 检查 source map 是否被错误发布到公网。
-- 用浏览器 Network 面板确认首屏请求数量、资源大小和缓存命中。
-- 如果用了 MF，单独检查 remoteEntry 加载、shared 版本协商和 remote 失败兜底。
-
-生成 stats 的方式通常是：
-
-```bash title="terminal"
-webpack --profile --json > stats.json
-```
-
-如果发现 chunk 过大，优先判断是不是低频功能没有动态导入，或者某个重依赖进入了首屏入口。如果发现 chunk 过碎，优先看 splitChunks 是否过于激进，或者公共模块体积太小却被频繁抽离。
-
-如果发现 vendor hash 经常变化，优先看 runtime 是否独立、module id 是否稳定、构建输入是否包含时间戳或环境随机值。如果发现 Tree Shaking 没效果，优先看依赖产物格式和 sideEffects 声明，而不是继续拆 chunk。
-
 ### 一套比较稳的生产思路
 
 生产项目可以按这个顺序推进：
@@ -595,7 +694,7 @@ webpack --profile --json > stats.json
 ```d2
 direction: down
 
-baseline: 建立体积和构建耗时基线
+baseline: 建立基线（体积、构建耗时、缓存命中）
 tree: 检查 Tree Shaking 和副作用声明
 split: 按路由和重依赖做分包
 cache: 配置 contenthash 和缓存头
@@ -604,12 +703,11 @@ speed: 开启持久化缓存和快速转译
 mf: 判断是否需要 MF {
   class: decision
 }
-analyze: 用 analyzer 和 stats 复查
 done: 稳定上线 {
   class: ok
 }
 
-baseline -> tree -> split -> cache -> runtime -> speed -> mf -> analyze -> done
+baseline -> tree -> split -> cache -> runtime -> speed -> mf -> done
 ```
 
 不要一开始就追求复杂的 cacheGroups，也不要把 MF 当成默认架构。先做 Tree Shaking、路由级异步拆分、vendor/runtime 拆分和长期缓存，通常已经能解决大部分生产问题。
@@ -620,7 +718,7 @@ baseline -> tree -> split -> cache -> runtime -> speed -> mf -> analyze -> done
 
 Webpack 的原理，是从入口构建完整模块图，再把模块图转换成适合浏览器加载的 chunk 和 asset。理解 compiler、compilation、module graph、chunk graph 和 runtime，才能解释构建流程、HMR 流程和生产产物为什么长成现在这样。
 
-生产实践里，重点不是把配置写得多复杂，而是让代码分包符合加载时机和变化频率，让 Tree Shaking 删除真正无用的代码，让缓存策略符合资源类型，让构建链路少做无效工作。
+生产实践里，重点不是把配置写得多复杂，而是让 Tree Shaking 删除真正无用的代码，让代码分包符合加载时机和变化频率，让缓存策略符合资源类型，让构建链路少做无效工作。
 
 Module Federation 是 Webpack 5 很重要的能力，但它解决的是运行时跨应用组合和独立发布问题，不是普通分包优化的替代品。
 

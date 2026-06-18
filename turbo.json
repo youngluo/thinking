@@ -24,9 +24,6 @@
     "docs:dev": {
       "cache": false,
       "persistent": true
-    },
-    "docs:generate": {
-      "cache": false
     }
   }
 }

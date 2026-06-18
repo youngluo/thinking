@@ -7,8 +7,7 @@
   "scripts": {
     "build": "turbo run build",
     "docs:build": "turbo run docs:build --filter=@thinking/docs",
-    "docs:dev": "pnpm docs:generate && turbo run docs:dev --filter=@thinking/docs",
-    "docs:generate": "tsx scripts/generate-docs.ts",
+    "docs:dev": "turbo run docs:dev --filter=@thinking/docs",
     "preinstall": "npx only-allow pnpm",
     "prepare": "husky",
     "test": "turbo run test"
