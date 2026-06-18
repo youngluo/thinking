@@ -6,7 +6,6 @@ import {
   d2PreRenderPlugin,
   type D2PreRenderOptions,
 } from './plugins/d2PreRender'
-import { pluginCodeDocs } from './plugins/codeDocs'
 import { pluginImageZoom } from './plugins/imageZoom'
 import { pluginRoutePathRewrite } from './plugins/routePathRewrite'
 import {
@@ -65,6 +64,7 @@ const d2PreRenderOptions: D2PreRenderOptions = {
 }
 
 const experiences = getGeneratedSidebar(EXPERIENCES_PATH, SIDEBAR_GROUP_ORDERS)
+const code = getGeneratedSidebar(CODE_PATH, SIDEBAR_GROUP_ORDERS)
 
 export default defineConfig({
   root: '.',
@@ -119,6 +119,7 @@ export default defineConfig({
       'doc_build/**',
       'plugins/**',
       'rspress.config.ts',
+      'scripts/**',
       'theme/**',
       'utils.ts',
       ...getDraftMarkdownExcludePaths(),
@@ -126,9 +127,13 @@ export default defineConfig({
     ],
   },
   themeConfig: {
-    nav: [{ text: '思考总结', link: getFirstLink(experiences) }],
+    nav: [
+      { text: '思考总结', link: getFirstLink(experiences) },
+      { text: '代码笔记', link: getFirstLink(code) },
+    ],
     sidebar: {
       '/experiences/': experiences,
+      '/code/': code,
     },
     // lastUpdated: true,
   },
@@ -140,9 +145,6 @@ export default defineConfig({
   },
   plugins: [
     mermaid(),
-    pluginCodeDocs({
-      sidebarGroupOrder: SIDEBAR_GROUP_ORDERS[CODE_PATH],
-    }),
     pluginRoutePathRewrite(),
     pluginImageZoom({
       selector: '.rspress-doc .d2-diagram > svg',

@@ -13,6 +13,7 @@ dist/
 *.local
 *.log*
 doc_build/
+apps/docs/code/
 
 .vscode/*
 !.vscode/extensions.json
