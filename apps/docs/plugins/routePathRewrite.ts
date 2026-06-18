@@ -6,7 +6,9 @@ const DOCS_ROOT = dirname(
   dirname(decodeURIComponent(new URL(import.meta.url).pathname))
 )
 const EXPERIENCES_PATH = 'experiences'
+const AI_PATH = 'ai'
 const CODE_PATH = 'code'
+const CONTENT_PATHS = [EXPERIENCES_PATH, AI_PATH, CODE_PATH]
 
 function sanitizeRoutePath(pathname: string) {
   return pathname.replace(/\s+/g, '_')
@@ -94,9 +96,9 @@ function toPublicMarkdownUrl(url: string, filePath: string) {
 }
 
 function getWhitespaceMarkdownFiles() {
-  return [EXPERIENCES_PATH, CODE_PATH]
-    .flatMap((dir) => getPublishedMarkdownFiles(join(DOCS_ROOT, dir)))
-    .filter((filePath) => /\s/.test(toRoutePath(filePath)))
+  return CONTENT_PATHS.flatMap((dir) =>
+    getPublishedMarkdownFiles(join(DOCS_ROOT, dir))
+  ).filter((filePath) => /\s/.test(toRoutePath(filePath)))
 }
 
 export function pluginRoutePathRewrite(): RspressPlugin {

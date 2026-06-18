@@ -9,6 +9,7 @@ import {
 import { pluginImageZoom } from './plugins/imageZoom'
 import { pluginRoutePathRewrite } from './plugins/routePathRewrite'
 import {
+  AI_PATH,
   CODE_PATH,
   EXPERIENCES_PATH,
   getDraftMarkdownExcludePaths,
@@ -34,9 +35,9 @@ const SIDEBAR_GROUP_ORDERS: Record<string, string[]> = {
     '浏览器原理',
     '构建工具',
     'React',
-    'Agent',
     '性能优化与监控',
   ],
+  [AI_PATH]: ['Agent'],
   [CODE_PATH]: ['算法', '设计模式', '数据结构', '函数式', '工具函数'],
 }
 const d2PreRenderOptions: D2PreRenderOptions = {
@@ -64,6 +65,7 @@ const d2PreRenderOptions: D2PreRenderOptions = {
 }
 
 const experiences = getGeneratedSidebar(EXPERIENCES_PATH, SIDEBAR_GROUP_ORDERS)
+const ai = getGeneratedSidebar(AI_PATH, SIDEBAR_GROUP_ORDERS)
 const code = getGeneratedSidebar(CODE_PATH, SIDEBAR_GROUP_ORDERS)
 
 export default defineConfig({
@@ -128,11 +130,13 @@ export default defineConfig({
   },
   themeConfig: {
     nav: [
-      { text: '思考总结', link: getFirstLink(experiences) },
+      { text: '前端思考', link: getFirstLink(experiences) },
+      { text: 'AI', link: getFirstLink(ai) },
       { text: '代码笔记', link: getFirstLink(code) },
     ],
     sidebar: {
       '/experiences/': experiences,
+      '/ai/': ai,
       '/code/': code,
     },
     // lastUpdated: true,

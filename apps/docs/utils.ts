@@ -5,7 +5,9 @@ export const DOCS_ROOT = dirname(
   decodeURIComponent(new URL(import.meta.url).pathname)
 )
 export const EXPERIENCES_PATH = 'experiences'
+export const AI_PATH = 'ai'
 export const CODE_PATH = 'code'
+const CONTENT_PATHS = [EXPERIENCES_PATH, AI_PATH, CODE_PATH]
 
 type MarkdownMeta = {
   order?: number
@@ -233,8 +235,9 @@ export function getGeneratedSidebar(
 }
 
 export function getMermaidRoutePaths() {
-  return [EXPERIENCES_PATH, CODE_PATH]
-    .flatMap((dir) => getPublishedMarkdownFiles(join(DOCS_ROOT, dir)))
+  return CONTENT_PATHS.flatMap((dir) =>
+    getPublishedMarkdownFiles(join(DOCS_ROOT, dir))
+  )
     .filter((filePath) =>
       readFileSync(filePath, 'utf-8').includes('```mermaid')
     )
@@ -242,9 +245,9 @@ export function getMermaidRoutePaths() {
 }
 
 function getWhitespaceMarkdownFiles() {
-  return [EXPERIENCES_PATH, CODE_PATH]
-    .flatMap((dir) => getPublishedMarkdownFiles(join(DOCS_ROOT, dir)))
-    .filter((filePath) => /\s/.test(toRoutePath(filePath)))
+  return CONTENT_PATHS.flatMap((dir) =>
+    getPublishedMarkdownFiles(join(DOCS_ROOT, dir))
+  ).filter((filePath) => /\s/.test(toRoutePath(filePath)))
 }
 
 export function getWhitespaceMarkdownExcludePaths() {
@@ -254,8 +257,7 @@ export function getWhitespaceMarkdownExcludePaths() {
 }
 
 export function getDraftMarkdownExcludePaths() {
-  return [EXPERIENCES_PATH, CODE_PATH]
-    .flatMap((dir) => getMarkdownFiles(join(DOCS_ROOT, dir)))
+  return CONTENT_PATHS.flatMap((dir) => getMarkdownFiles(join(DOCS_ROOT, dir)))
     .filter(isDraftMarkdownFile)
     .map((filePath) => relative(DOCS_ROOT, filePath).split(sep).join('/'))
 }
