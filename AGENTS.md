@@ -112,6 +112,10 @@ Rspress 文档位于 `apps/docs/`。文档生成脚本是 `scripts/generate-docs
 - https://rspress.rs/llms.txt
 - https://rspress.rs/guide/start/introduction.md
 
+编写 Rspress 文档代码块时：
+
+- 展示事件监听时，避免只包含注释的匿名空回调，例如 `() => { /* comment */ }`；更推荐先声明命名函数，再传给 `addEventListener`。
+
 ## D2 规范
 
 - 只统一少量语义节点的背景色，不限制 D2 的结构、方向、布局、节点组织方式和默认样式。

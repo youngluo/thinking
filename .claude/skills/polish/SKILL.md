@@ -90,30 +90,8 @@ description: 只用于已有技术文章或文档草稿的后期编辑。仅当�
 - 普通概念、通用术语、库名、框架名和自然语言描述不要使用反引号。同一句话里，如果是在说明某个代码标识符，保留反引号；如果只是在讨论技术概念，使用正常文本。
 - 有序标题编号统一使用英文句点加空格，例如 `### 1. 标题`、`### 2.1. 标题`。不要使用中文顿号格式，例如 `### 1、标题`、`### 2.1、标题`。
 - 全中文文章使用中文全角标点，中文内容使用中文引号；英文句子和英文内容使用英文引号。代码、命令、路径、配置项和 API 名称保持其原始符号。
+- 并列列表条目之间用中文分号「；」分隔，末项以中文句号「。」收尾，适用于无序列表和有序列表。顺序步骤（按时间或流程展开的步骤）每条仍以句号收尾，不视为并列关系。表格单元格内不重复加句号。
 - 破折号（——）必须逐个检查。Markdown 渲染后视觉效果不明显，优先改用句号断句或逗号；诊断报告中列出所有破折号位置及修改建议。
-
-### Mermaid 规范
-
-- 只统一配色和线条，不限制 Mermaid 的结构、方向和节点组织方式。
-- 所有 Mermaid 图统一使用：
-
-```mermaid
-%%{init: {'themeVariables': {'lineColor': '#7fa3ff'}}}%%
-```
-
-- 线条主色固定为 `#7fa3ff`。
-- 所有节点与分组标题的文字颜色都使用 Mermaid 默认文字色，不单独设置 `color`。
-- Mermaid 配色使用低饱和浅色系，不要为单篇文档切换成新主题。
-- 普通节点：`fill:#7fa3ff29,stroke:#07f,stroke-width:1px`，这是最常用的节点。
-- subgraph/分组容器：`fill:#fffaf0,stroke:#ffa500,stroke-width:2px,stroke-dasharray:5,5`。
-- 红色步骤：`fill:#ffcdd2,stroke:#b71c1c,stroke-width:1px`，可表示失败或者需慎重的节点。
-- 绿色步骤：`fill:#c8e6c9,stroke:#1b5e20,stroke-width:1px`，可表示成功的节点。
-- 紫色步骤：`fill:#e1bee7,stroke:#4a148c,stroke-width:1px`，可作为判断节点。
-- 橙色步骤：`fill:#ffe0b2,stroke:#bf360c,stroke-width:1px`，可随机分配。
-- 蓝色步骤：`fill:#bbdefb,stroke:#0d47a1,stroke-width:1px`，可随机分配。
-- 青色步骤：`fill:#b2ebf2,stroke:#006064,stroke-width:1px`，可随机分配。
-- 说明文字：`fill:none,stroke:none,color:#333,font-size:13px`。
-- 节点圆角统一使用 `rx:4,ry:4`；常规节点边框 `stroke-width:1px`，subgraph/分组容器边框 `stroke-width:2px` 并使用虚线。
 
 ## 诊断报告输出格式
 

@@ -1,9 +1,20 @@
 # Thinking
 
-个人知识库，记录技术学习、经验总结与思考沉淀。内容涵盖前端架构、算法、数据结构、设计模式等主题，配有 VitePress 文档站点呈现。
+个人知识库，记录前端工程、架构实践、计算机基础与 AI Agent 的长期思考。
 
 ## 技术栈
 
-- **VitePress** — 文档站点
-- **TypeScript** — 示例代码
-- **Jest** — 测试验证
+- **Rspress** - 文档站点
+- **Turbo** - monorepo 构建流水线
+- **pnpm** - workspace 包管理
+- **TypeScript** - 示例代码与工具脚本
+- **D2** - 文档图表
+
+## 常用命令
+
+```bash
+rtk pnpm test           # 运行全部测试（turbo）
+rtk pnpm build          # 构建所有包（turbo）
+rtk pnpm docs:dev       # 启动 Rspress 文档开发服务器
+rtk pnpm docs:build     # 构建 Rspress 文档
+```
