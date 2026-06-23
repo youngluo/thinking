@@ -12,6 +12,7 @@ import {
   AI_PATH,
   CODE_PATH,
   EXPERIENCES_PATH,
+  INTERVIEW_PATH,
   getDraftMarkdownExcludePaths,
   getFirstLink,
   getGeneratedSidebar,
@@ -35,6 +36,7 @@ const SIDEBAR_GROUP_ORDERS: Record<string, string[]> = {
     '浏览器原理',
     '构建工具',
     'React',
+    'Vue',
     '性能优化与监控',
   ],
   [AI_PATH]: ['Agent'],
@@ -67,6 +69,7 @@ const d2PreRenderOptions: D2PreRenderOptions = {
 const experiences = getGeneratedSidebar(EXPERIENCES_PATH, SIDEBAR_GROUP_ORDERS)
 const ai = getGeneratedSidebar(AI_PATH, SIDEBAR_GROUP_ORDERS)
 const code = getGeneratedSidebar(CODE_PATH, SIDEBAR_GROUP_ORDERS)
+const interview = getGeneratedSidebar(INTERVIEW_PATH, SIDEBAR_GROUP_ORDERS)
 
 export default defineConfig({
   root: '.',
@@ -133,11 +136,13 @@ export default defineConfig({
       { text: '前端思考', link: getFirstLink(experiences) },
       { text: 'AI', link: getFirstLink(ai) },
       { text: '代码笔记', link: getFirstLink(code) },
+      { text: '面试题', link: getFirstLink(interview) },
     ],
     sidebar: {
       '/experiences/': experiences,
       '/ai/': ai,
       '/code/': code,
+      '/interview/': interview,
     },
     // lastUpdated: true,
   },

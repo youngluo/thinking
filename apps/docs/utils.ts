@@ -7,7 +7,8 @@ export const DOCS_ROOT = dirname(
 export const EXPERIENCES_PATH = 'experiences'
 export const AI_PATH = 'ai'
 export const CODE_PATH = 'code'
-const CONTENT_PATHS = [EXPERIENCES_PATH, AI_PATH, CODE_PATH]
+export const INTERVIEW_PATH = 'interview'
+const CONTENT_PATHS = [EXPERIENCES_PATH, AI_PATH, CODE_PATH, INTERVIEW_PATH]
 
 type MarkdownMeta = {
   order?: number
@@ -46,14 +47,18 @@ export function getRouteUrl(siteOrigin: string, routePath: string) {
   )
 }
 
-export function getFirstLink(sidebars: SidebarItem[]) {
+export function getFirstLink(sidebars: SidebarItem[], fallback = '/') {
   const item = sidebars[0]
+
+  if (!item) {
+    return fallback
+  }
 
   if ('link' in item) {
     return item.link
   }
 
-  return item.items[0].link
+  return item.items[0]?.link ?? fallback
 }
 
 function sanitizeRoutePath(pathname: string) {
