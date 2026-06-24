@@ -1,5 +1,6 @@
 import { transformerNotationErrorLevel } from '@shikijs/transformers'
 import { pluginNodePolyfill } from '@rsbuild/plugin-node-polyfill'
+import { pluginSitemap } from '@rspress/plugin-sitemap'
 import { defineConfig } from '@rspress/core'
 import mermaid from 'rspress-plugin-mermaid'
 import {
@@ -25,28 +26,19 @@ import {
 const BASE_PATH = process.env.NODE_ENV === 'production' ? '/' : '/thinking/'
 const SITE_URL = 'https://thinking.youngluo.com'
 const SITE_ORIGIN = `${SITE_URL}${BASE_PATH}`
+const SITE_HOME_URL = getSiteUrl(SITE_ORIGIN)
 const SITE_TITLE = 'Thinking'
 const SITE_DESCRIPTION =
-  '我叫阿良的技术笔记，记录前端工程、架构实践、计算机基础与 AI Agent 的长期思考。'
+  '我叫阿良，这里记录前端、全栈、架构、与 AI Agent 的实践思考。'
 const SITE_KEYWORDS =
-  '前端工程,前端架构,React,Vue,TypeScript,JavaScript,AI Agent,LLM,计算机基础,技术笔记'
+  '前端,全栈,前端架构,React,Vue,TypeScript,JavaScript,AI Agent,LLM,技术笔记'
+const AUTHOR_NAME = '我叫阿良'
+const AUTHOR_ALTERNATE_NAMES = ['Young', 'youngluo']
+const AUTHOR_URL = `${SITE_HOME_URL}about`
+const GITHUB_PROFILE_URL = 'https://github.com/youngluo'
+const GITHUB_REPOSITORY_URL = 'https://github.com/youngluo/thinking'
 const UMAMI_SCRIPT_URL = process.env.DOCS_UMAMI_SCRIPT_URL
 const UMAMI_WEBSITE_ID = process.env.DOCS_UMAMI_WEBSITE_ID
-const umamiHead =
-  process.env.NODE_ENV === 'production' && UMAMI_SCRIPT_URL && UMAMI_WEBSITE_ID
-    ? ([
-        [
-          'script',
-          {
-            defer: 'true',
-            src: UMAMI_SCRIPT_URL,
-            'data-website-id': UMAMI_WEBSITE_ID,
-            'data-domains': new URL(SITE_URL).hostname,
-            'data-do-not-track': 'true',
-          },
-        ],
-      ] satisfies [string, Record<string, string>][])
-    : []
 const SIDEBAR_GROUP_ORDERS: Record<string, string[]> = {
   [EXPERIENCES_PATH]: [
     '架构',
@@ -95,7 +87,7 @@ export default defineConfig({
   title: SITE_TITLE,
   description: SITE_DESCRIPTION,
   head: [
-    ['meta', { name: 'author', content: '我叫阿良' }],
+    ['meta', { name: 'author', content: AUTHOR_NAME }],
     ['meta', { name: 'keywords', content: SITE_KEYWORDS }],
     ['meta', { name: 'robots', content: 'index,follow' }],
     (route) => [
@@ -117,21 +109,36 @@ export default defineConfig({
     ['meta', { name: 'twitter:card', content: 'summary' }],
     ['meta', { name: 'twitter:title', content: SITE_TITLE }],
     ['meta', { name: 'twitter:description', content: SITE_DESCRIPTION }],
+    ...(UMAMI_SCRIPT_URL && UMAMI_WEBSITE_ID
+      ? [
+          `<script defer src="${UMAMI_SCRIPT_URL}" data-website-id="${UMAMI_WEBSITE_ID}"></script>`,
+        ]
+      : []),
     `<script type="application/ld+json">${JSON.stringify({
       '@context': 'https://schema.org',
-      '@type': 'WebSite',
-      name: SITE_TITLE,
-      description: SITE_DESCRIPTION,
-      url: getSiteUrl(SITE_ORIGIN),
-      author: {
-        '@type': 'Person',
-        name: '我叫阿良',
-        url: 'https://github.com/youngluo',
-      },
-      inLanguage: 'zh-CN',
-      sameAs: ['https://github.com/youngluo/thinking'],
+      '@graph': [
+        {
+          '@type': 'Person',
+          '@id': `${AUTHOR_URL}#person`,
+          name: AUTHOR_NAME,
+          alternateName: AUTHOR_ALTERNATE_NAMES,
+          url: AUTHOR_URL,
+          sameAs: [GITHUB_PROFILE_URL, GITHUB_REPOSITORY_URL],
+        },
+        {
+          '@type': 'WebSite',
+          '@id': `${SITE_HOME_URL}#website`,
+          name: SITE_TITLE,
+          alternateName: 'Thinking',
+          description: SITE_DESCRIPTION,
+          url: SITE_HOME_URL,
+          author: {
+            '@id': `${AUTHOR_URL}#person`,
+          },
+          inLanguage: 'zh-CN',
+        },
+      ],
     })}</script>`,
-    ...umamiHead,
   ],
   ssg: {
     experimentalExcludeRoutePaths: getMermaidRoutePaths(),
@@ -155,6 +162,7 @@ export default defineConfig({
       { text: 'AI', link: getFirstLink(ai) },
       { text: '代码笔记', link: getFirstLink(code) },
       { text: '面试题', link: getFirstLink(interview) },
+      { text: '关于', link: '/about' },
     ],
     sidebar: {
       '/experiences/': experiences,
@@ -172,6 +180,9 @@ export default defineConfig({
   },
   plugins: [
     mermaid(),
+    pluginSitemap({
+      siteUrl: SITE_HOME_URL,
+    }),
     pluginRoutePathRewrite(),
     pluginImageZoom({
       selector: '.rspress-doc .d2-diagram > svg',

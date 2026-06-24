@@ -154,13 +154,9 @@ export const HomePage: FC = () => {
       <section className="thinking-home__hero">
         <div className="thinking-home__hero-copy">
           <p className="thinking-home__eyebrow">Thinking Notes</p>
-          <h1 className="thinking-home__title">
-            Stay Hungry.
-            <span>Stay Foolish.</span>
+          <h1 className="thinking-home__intro">
+            我叫阿良，这里记录前端、全栈、架构、与 AI Agent 的实践思考。
           </h1>
-          <p className="thinking-home__intro">
-            记录前端工程、架构实践、计算机基础与 AI Agent 的长期思考。
-          </p>
           <div className="thinking-home__actions">
             <a
               className="thinking-home__button thinking-home__button--primary"

@@ -18,6 +18,7 @@
     },
     "docs:build": {
       "dependsOn": ["^build"],
+      "env": ["DOCS_UMAMI_SCRIPT_URL", "DOCS_UMAMI_WEBSITE_ID"],
       "outputs": ["doc_build/**"],
       "cache": true
     },
