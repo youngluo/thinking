@@ -30,6 +30,23 @@ const SITE_DESCRIPTION =
   '我叫阿良的技术笔记，记录前端工程、架构实践、计算机基础与 AI Agent 的长期思考。'
 const SITE_KEYWORDS =
   '前端工程,前端架构,React,Vue,TypeScript,JavaScript,AI Agent,LLM,计算机基础,技术笔记'
+const UMAMI_SCRIPT_URL = process.env.DOCS_UMAMI_SCRIPT_URL
+const UMAMI_WEBSITE_ID = process.env.DOCS_UMAMI_WEBSITE_ID
+const umamiHead =
+  process.env.NODE_ENV === 'production' && UMAMI_SCRIPT_URL && UMAMI_WEBSITE_ID
+    ? ([
+        [
+          'script',
+          {
+            defer: 'true',
+            src: UMAMI_SCRIPT_URL,
+            'data-website-id': UMAMI_WEBSITE_ID,
+            'data-domains': new URL(SITE_URL).hostname,
+            'data-do-not-track': 'true',
+          },
+        ],
+      ] satisfies [string, Record<string, string>][])
+    : []
 const SIDEBAR_GROUP_ORDERS: Record<string, string[]> = {
   [EXPERIENCES_PATH]: [
     '架构',
@@ -114,6 +131,7 @@ export default defineConfig({
       inLanguage: 'zh-CN',
       sameAs: ['https://github.com/youngluo/thinking'],
     })}</script>`,
+    ...umamiHead,
   ],
   ssg: {
     experimentalExcludeRoutePaths: getMermaidRoutePaths(),

@@ -8,7 +8,8 @@ const DOCS_ROOT = dirname(
 const EXPERIENCES_PATH = 'experiences'
 const AI_PATH = 'ai'
 const CODE_PATH = 'code'
-const CONTENT_PATHS = [EXPERIENCES_PATH, AI_PATH, CODE_PATH]
+const INTERVIEW_PATH = 'interview'
+const CONTENT_PATHS = [EXPERIENCES_PATH, AI_PATH, CODE_PATH, INTERVIEW_PATH]
 
 function sanitizeRoutePath(pathname: string) {
   return pathname.replace(/\s+/g, '_')
