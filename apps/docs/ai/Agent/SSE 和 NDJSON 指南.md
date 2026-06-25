@@ -31,19 +31,18 @@ order: 5
 
 SSE 全称是 Server-Sent Events，中文一般叫服务端推送事件。它是浏览器基于 HTTP 接收服务端持续推送事件的一种标准机制：客户端发起一个普通 HTTP 请求，服务端保持连接不关闭，并持续往响应体里写入事件，浏览器端通过 `EventSource` 接收这些事件。
 
-```mermaid
-%%{init: {'themeVariables': {'lineColor': '#7fa3ff'}}}%%
-flowchart LR
-    A[浏览器 EventSource] --> B[HTTP 请求]
-    B --> C[服务端保持连接]
-    C --> D[持续写入事件]
-    D --> E[前端增量渲染]
+```d2
+direction: right
 
-    style A fill:#7fa3ff29,stroke:#07f,stroke-width:1px,rx:4,ry:4
-    style B fill:#bbdefb,stroke:#0d47a1,stroke-width:1px,rx:4,ry:4
-    style C fill:#ffe0b2,stroke:#bf360c,stroke-width:1px,rx:4,ry:4
-    style D fill:#b2ebf2,stroke:#006064,stroke-width:1px,rx:4,ry:4
-    style E fill:#c8e6c9,stroke:#1b5e20,stroke-width:1px,rx:4,ry:4
+A: 浏览器 EventSource
+B: HTTP 请求
+C: 服务端保持连接
+D: 持续写入事件
+E: 前端增量渲染 {
+  class: ok
+}
+
+A -> B -> C -> D -> E
 ```
 
 ### 数据格式
@@ -197,19 +196,18 @@ SSE 不太适合这些场景：
 
 NDJSON 全称是 Newline Delimited JSON，也就是“换行分隔的 JSON”。NDJSON 流会把每条消息写成一个独立 JSON 对象，并用换行符分隔。严格说，NDJSON 不是浏览器专属协议，也不是像 SSE 那样的事件标准。SSE 更像浏览器事件推送协议，NDJSON 更像一种通用数据编码格式：只要通信通道支持流式读取，就可以一边写 JSON 行，一边读 JSON 行。
 
-```mermaid
-%%{init: {'themeVariables': {'lineColor': '#7fa3ff'}}}%%
-flowchart LR
-    A[浏览器 fetch] --> B[POST + JSON body]
-    B --> C[服务端逐行写 JSON]
-    C --> D[按行解析为对象]
-    D --> E[处理结构化事件]
+```d2
+direction: right
 
-    style A fill:#7fa3ff29,stroke:#07f,stroke-width:1px,rx:4,ry:4
-    style B fill:#bbdefb,stroke:#0d47a1,stroke-width:1px,rx:4,ry:4
-    style C fill:#ffe0b2,stroke:#bf360c,stroke-width:1px,rx:4,ry:4
-    style D fill:#b2ebf2,stroke:#006064,stroke-width:1px,rx:4,ry:4
-    style E fill:#c8e6c9,stroke:#1b5e20,stroke-width:1px,rx:4,ry:4
+A: 浏览器 fetch
+B: POST + JSON body
+C: 服务端逐行写 JSON
+D: 按行解析为对象
+E: 处理结构化事件 {
+  class: ok
+}
+
+A -> B -> C -> D -> E
 ```
 
 ### 数据格式
@@ -274,6 +272,7 @@ while (reader) {
   }
 }
 
+// 处理流结束时没有换行结尾的最后一条数据。
 buffer += decoder.decode()
 
 if (buffer.trim()) {
@@ -481,21 +480,33 @@ SSE 和 NDJSON 都是单向的：服务端往一个 HTTP 长响应里持续写�
 
 一个实用判断流程：
 
-```mermaid
-%%{init: {'themeVariables': {'lineColor': '#7fa3ff'}}}%%
-flowchart LR
-    A[需要流式输出] --> B{请求体是否复杂 / 消费端是否多端}
-    B -- 是 --> C[NDJSON]
-    B -- 否 --> D{是否主要面向浏览器 + 请求简单}
-    D -- 是 --> E[SSE]
-    D -- 否 --> C
-    C -.真正需要双向通信时.-> F[WebSocket]
-    E -.真正需要双向通信时.-> F
+```d2
+direction: down
 
-    style A fill:#7fa3ff29,stroke:#07f,stroke-width:1px,rx:4,ry:4
-    style B fill:#e1bee7,stroke:#4a148c,stroke-width:1px,rx:4,ry:4
-    style C fill:#bbdefb,stroke:#0d47a1,stroke-width:1px,rx:4,ry:4
-    style D fill:#e1bee7,stroke:#4a148c,stroke-width:1px,rx:4,ry:4
-    style E fill:#c8e6c9,stroke:#1b5e20,stroke-width:1px,rx:4,ry:4
-    style F fill:#ffe0b2,stroke:#bf360c,stroke-width:1px,rx:4,ry:4
+A: 需要流式输出
+B: "请求体是否复杂\n或消费端是否多端？" {
+  shape: diamond
+  width: 260
+  class: decision
+}
+C: NDJSON {
+  class: ok
+}
+D: "主要面向浏览器\n且请求简单？" {
+  shape: diamond
+  width: 260
+  class: decision
+}
+E: SSE {
+  class: ok
+}
+F: WebSocket
+
+A -> B
+B -> C: 是
+B -> D: 否
+D -> E: 是
+D -> C: 否
+C -> F: 真正需要双向通信时
+E -> F: 真正需要双向通信时
 ```

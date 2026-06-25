@@ -115,6 +115,7 @@ Rspress 文档位于 `apps/docs/`。文档生成脚本是 `scripts/generate-docs
 编写 Rspress 文档代码块时：
 
 - 展示事件监听时，避免只包含注释的匿名空回调，例如 `() => { /* comment */ }`；更推荐先声明命名函数，再传给 `addEventListener`。
+- 示例代码中，函数、类型、类等 API 说明使用 `/** ... */`；函数体内部的局部说明使用 `//`。
 
 ## D2 规范
 

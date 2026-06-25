@@ -72,7 +72,6 @@ const reader = response.body?.getReader()
 
 while (reader) {
   const { value, done } = await reader.read()
-
   if (done) break
   // value 是本次读到的 Uint8Array
 }
@@ -217,7 +216,9 @@ UI 状态才是最后一层。不同业务事件会映射到不同界面区域�
 把这些重复部分抽到 `lib/sse.ts`，后续的浏览器和服务端代码都直接复用：
 
 ```ts fold title="lib/sse.ts"
-/** 把 ReadableStream 解析成 SSE 事件流，调用方用 for await 消费 */
+/**
+ * 把 ReadableStream 解析成 SSE 事件流，调用方用 for await 消费。
+ */
 export async function* parseSSE(body: ReadableStream<Uint8Array>) {
   const reader = body.getReader()
   const decoder = new TextDecoder()
@@ -255,12 +256,16 @@ export async function* parseSSE(body: ReadableStream<Uint8Array>) {
 
 const encoder = new TextEncoder()
 
-/** 服务端往 controller 写一条 SSE 事件 */
+/**
+ * 服务端往 controller 写一条 SSE 事件。
+ */
 export function writeSSE(controller: ReadableStreamDefaultController<Uint8Array>, event: string, data: unknown) {
   controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`))
 }
 
-/** 包装一个标准的 SSE Response,自动处理取消、错误和结束信号 */
+/**
+ * 包装一个标准的 SSE Response，自动处理取消、错误和结束信号。
+ */
 export function createSSEResponse(request: Request, produce: (controller: ReadableStreamDefaultController<Uint8Array>, signal: AbortSignal) => Promise<void>) {
   const abortController = new AbortController()
   request.signal.addEventListener('abort', () => abortController.abort())
@@ -558,6 +563,8 @@ function handleAgentEvent(event: AgentStreamEvent) {
 }
 ```
 
+### 用 EventSource 消费 SSE
+
 如果后端返回的是 SSE，浏览器可以用 `EventSource`，也可以用 `fetch` 读取流。`EventSource` 写起来很轻，浏览器会按 `event:` 名称自动分发事件：
 
 ```ts fold
@@ -575,16 +582,24 @@ source.addEventListener('done', () => {
 source.addEventListener('error', (e) => {
   if (e instanceof MessageEvent && e.data) {
     handleAgentEvent({ type: 'error', ...JSON.parse(e.data) })
-  } else {
-    handleAgentEvent({ type: 'error', message: '连接异常' })
+    source.close()
+    return
   }
-  source.close()
+
+  handleAgentEvent({ type: 'error', message: '连接异常' })
+  // 普通连接异常不主动 close，让 EventSource 按浏览器策略自动重连。
 })
 ```
 
-`EventSource` 有几个容易忽略的点：默认事件名是 `message`，自定义事件（如 `done`、`tool_call`）必须显式 `addEventListener` 才能收到；`error` 既包含服务端写的业务错误（`MessageEvent`，带 `data`），也包含连接断开（普通 `Event`，没有 `data`），需要分开处理；连接出错后浏览器会自动重连，所以流正常结束或确认失败时都要手动 `close()`，否则会重新发起一次请求。
+`EventSource` 有几个容易忽略的点：
 
-但 `EventSource` 只支持 GET，Chat 或 Agent 接口通常需要 POST body、复杂鉴权和请求上下文，这时换成 `fetch` + `parseSSE` 更灵活：
+- 默认事件名是 `message`，自定义事件（如 `done`、`tool_call`）必须显式 `addEventListener` 才能收到；
+- `error` 既包含服务端写的业务错误（`MessageEvent`，带 `data`），也包含连接断开（普通 `Event`，没有 `data`），需要分开处理；
+- 普通连接异常后浏览器会自动重连；只有流正常结束，或者服务端已经返回业务错误时，才需要手动 `close()`。
+
+### 用 fetch 消费 SSE
+
+`EventSource` 只支持 GET，Chat 或 Agent 接口通常需要 POST body、复杂鉴权和请求上下文，这时换成 `fetch` + `parseSSE` 更灵活：
 
 ```ts fold
 import { parseSSE } from '@/lib/sse'
@@ -607,6 +622,92 @@ for await (const { event, data } of parseSSE(response.body)) {
 ```
 
 `parseSSE` 把字节读取、`buffer` 拼接和 `event:`/`data:` 字段解析全包好了，浏览器只剩两件事：解析 `data` 里的 JSON，把 `event` 当成业务事件类型分发给 `handleAgentEvent`。
+
+### 用 XMLHttpRequest 消费 SSE
+
+如果老项目只能用 `XMLHttpRequest`，也可以在 `onprogress` 里读取新增的 `responseText`，再按 SSE 的空行边界切事件：
+
+```ts fold
+const xhr = new XMLHttpRequest()
+let readOffset = 0
+let buffer = ''
+
+function handleSSEBlock(block: string) {
+  const lines = block.split('\n')
+  const event =
+    lines
+      .find((line) => line.startsWith('event:'))
+      ?.slice('event:'.length)
+      .trim() || 'message'
+  const data = lines
+    .filter((line) => line.startsWith('data:'))
+    .map((line) => line.slice('data:'.length).trim())
+    .join('\n')
+
+  if (!data) return
+
+  const payload = JSON.parse(data)
+  handleAgentEvent({ type: event, ...payload } as AgentStreamEvent)
+}
+
+xhr.open('POST', '/api/agent')
+xhr.setRequestHeader('Content-Type', 'application/json')
+
+xhr.onprogress = () => {
+  // responseText 是从请求开始累计到现在的完整文本。
+  // 每次只截取上次未消费的新内容，避免重复解析。
+  const chunk = xhr.responseText.slice(readOffset)
+  readOffset = xhr.responseText.length
+
+  buffer += chunk
+  const blocks = buffer.split('\n\n')
+  buffer = blocks.pop() ?? ''
+
+  for (const block of blocks) {
+    if (!block.trim()) continue
+    handleSSEBlock(block)
+  }
+}
+
+xhr.onerror = () => {
+  handleAgentEvent({ type: 'error', message: '连接异常' })
+}
+
+xhr.send(JSON.stringify({ message }))
+```
+
+这里不需要再用 `TextDecoder`，因为 `xhr.responseText` 已经是浏览器按响应编码解码后的字符串；`fetch` 读取 `ReadableStream` 时拿到的是 `Uint8Array`，才需要手动解码。服务端最好明确返回 `Content-Type: text/event-stream; charset=utf-8`，避免字符集判断不一致。
+
+这种写法能兼容一些历史 Ajax 封装，但它没有 `EventSource` 的自动重连，也没有 `fetch` 的流式读取 API，解析和取消逻辑都要自己补齐。新代码还是优先用前面的 `fetch` + `parseSSE`。
+
+### EventSource 的自动重连机制
+
+`EventSource` 建立连接后，浏览器会保持一个到 SSE 地址的 GET 请求。如果连接因为网络抖动、代理断开或服务端临时异常而中断，浏览器会触发 `error` 事件；只要代码没有调用 `source.close()`，浏览器就会等待一段时间后重新请求同一个地址。
+
+服务端可以用 `retry:` 字段建议浏览器的重连间隔：
+
+```text
+retry: 3000
+
+event: message
+data: {"content":"hi"}
+```
+
+这里的空行是 SSE 的事件分隔符，不是 `retry:` 后面必须跟空行。上面的写法表示先单独设置重连间隔，再发送下一条 `message` 事件。`retry:` 也可以和 `event:`、`data:` 写在同一个事件块里。
+
+这表示连接断开后，浏览器大约 3000ms 后再重连。服务端不写 `retry:` 时，浏览器会使用自己的默认重试间隔；标准没有规定固定值，Chrome/Chromium 通常大约是 3 秒。
+
+如果服务端给事件写了 `id:`，浏览器会记住最后一次收到的事件 ID：
+
+```text
+id: 42
+event: message
+data: {"content":"hi"}
+```
+
+下次自动重连时，浏览器会把这个值放进 `Last-Event-ID` 请求头。服务端可以根据它从断点之后继续推送，避免重复或丢事件。不过这需要服务端自己保存事件历史或进度；浏览器只负责把最后收到的 `id` 带回去。
+
+所以前面的 `EventSource` 示例里，只有两种情况主动 `close()`：收到 `done`，说明业务流已经正常结束；收到带 `data` 的业务错误，说明服务端已经明确失败。普通连接异常不主动关闭，是为了保留浏览器的自动重连能力。
 
 ## 流处理的工程注意点
 
