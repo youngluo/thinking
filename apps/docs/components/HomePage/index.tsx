@@ -1,10 +1,9 @@
 import type { FC } from 'react'
 import { useMemo } from 'react'
 import { usePages, withBase } from '@rspress/core/runtime'
-import { TrailCloud } from '../TrailCloud'
 import './index.css'
 
-type LatestExperience = {
+type LatestArticle = {
   title: string
   href: string
   createdAt: string
@@ -12,85 +11,10 @@ type LatestExperience = {
   createdAtMs: number
 }
 
-const TRAILS = [
-  '前端架构',
-  '微前端',
-  'React.js',
-  'Vue.js',
-  'Angular',
-  'Next.js',
-  'Node',
-  'Koa.js',
-  'Nest.js',
-  'Astro',
-  'SvelteKit',
-  'Nuxt.js',
-  'Hono.js',
-  'Remix',
-  'TanStack Router',
-  'TanStack Query',
-  'Express.js',
-  'Webpack',
-  'Vite',
-  'Rspack',
-  'Rspress',
-  'Rollup',
-  'Taro',
-  '微信小程序',
-  '前端监控',
-  'AI Agent',
-  'LLM',
-  'TypeScript',
-  'JavaScript',
-  'HTML5',
-  '性能优化',
-  '工程化',
-  '浏览器原理',
-  '模块化',
-  '组件化',
-  '设计模式',
-  '数据结构',
-  'RAG',
-  'Harness',
-  'CSS',
-  'Tailwind CSS',
-  'CSS Modules',
-  'SCSS',
-  'Less',
-  'PostCSS',
-  'Babel',
-  'SWC',
-  'esbuild',
-  'ESM',
-  'npm',
-  'pnpm',
-  'Yarn',
-  'Monorepo',
-  'Turborepo',
-  'Vitest',
-  'Playwright',
-  'Storybook',
-  'Redux',
-  'Zustand',
-  'Ant Design',
-  'SSR',
-  'SSG',
-  'React Compiler',
-  'RSC',
-  'PWA',
-  'Web Components',
-  'Service Worker',
-  'Web Worker',
-  'Bun.js',
-  'Biome',
-  'Oxc',
-  'shadcn/ui',
-  'Core Web Vitals',
-] as const
-
 const CURRENT_YEAR = new Date().getFullYear()
 const CREATED_AT_TIMEZONE = '+08:00'
-const LATEST_EXPERIENCES_LIMIT = 5
+const LATEST_ARTICLE_LIMIT = 12
+const ARTICLE_ROUTE_PREFIXES = ['/experiences/', '/ai/'] as const
 
 function compareDesc(a: string, b: string) {
   if (a === b) {
@@ -114,7 +38,7 @@ function getCreatedAtMeta(createdAt: unknown) {
   }
 
   return {
-    createdAt,
+    createdAt: createdAt.split(' ')[0] ?? createdAt,
     dateTime: new Date(createdAtMs).toISOString(),
     createdAtMs,
   }
@@ -122,9 +46,13 @@ function getCreatedAtMeta(createdAt: unknown) {
 
 export const HomePage: FC = () => {
   const { pages } = usePages()
-  const latestExperiences = useMemo(() => {
+  const latestArticles = useMemo(() => {
     return pages
-      .filter((page) => page.routePath.startsWith('/experiences/'))
+      .filter((page) =>
+        ARTICLE_ROUTE_PREFIXES.some((prefix) =>
+          page.routePath.startsWith(prefix)
+        )
+      )
       .map((page) => {
         const createdAt = getCreatedAtMeta(page.frontmatter.createdAt)
 
@@ -138,7 +66,7 @@ export const HomePage: FC = () => {
           ...createdAt,
         }
       })
-      .filter((page): page is LatestExperience => page !== undefined)
+      .filter((page): page is LatestArticle => page !== undefined)
       .sort((a, b) => {
         if (a.createdAtMs !== b.createdAtMs) {
           return b.createdAtMs - a.createdAtMs
@@ -146,32 +74,26 @@ export const HomePage: FC = () => {
 
         return compareDesc(a.href, b.href)
       })
-      .slice(0, LATEST_EXPERIENCES_LIMIT)
+      .slice(0, LATEST_ARTICLE_LIMIT)
   }, [pages])
 
   return (
     <main className="thinking-home">
-      <section className="thinking-home__hero">
-        <div className="thinking-home__hero-copy">
-          <p className="thinking-home__eyebrow">Aliang&apos;s thinking</p>
-          <h1 className="thinking-home__intro">
-            我叫阿良，这里记录前端、全栈、架构、与 AI Agent 的实践思考。
-          </h1>
-          <div className="thinking-home__actions">
-            <a
-              className="thinking-home__button thinking-home__button--primary"
-              href={withBase('/experiences/架构/如何理解前端架构.html')}
-            >
-              开始阅读
-            </a>
-            <a
-              className="thinking-home__button thinking-home__button--secondary"
-              href="https://github.com/youngluo/thinking"
-            >
-              GitHub
-            </a>
+      <div className="thinking-home__inner">
+        <header className="thinking-home__header">
+          <div className="thinking-home__masthead">
+            <div className="thinking-home__identity">
+              <h1 className="thinking-home__eyebrow">Aliang&apos;s thinking</h1>
+              <p className="thinking-home__intro">我叫阿良，一名前端爱好者。</p>
+            </div>
+            <nav className="thinking-home__links" aria-label="常用入口">
+              <a href={withBase('/experiences/架构/如何理解前端架构.html')}>
+                Blog
+              </a>
+              <a href="https://github.com/youngluo">GitHub</a>
+            </nav>
           </div>
-        </div>
+        </header>
 
         <section
           className="thinking-home__panel"
@@ -184,32 +106,28 @@ export const HomePage: FC = () => {
             最新文章
           </h2>
           <ol className="thinking-home__latest-list">
-            {latestExperiences.map((article, index) => (
+            {latestArticles.map((article) => (
               <li key={article.href}>
-                <span className="thinking-home__latest-index">
-                  {String(index + 1).padStart(2, '0')}
-                </span>
                 <a className="thinking-home__latest-link" href={article.href}>
+                  <time
+                    className="thinking-home__latest-date"
+                    dateTime={article.dateTime}
+                  >
+                    {article.createdAt}
+                  </time>
                   <span className="thinking-home__latest-title">
                     {article.title}
                   </span>
-                  {/* <time
-                    className="thinking-home__latest-date"
-                    dateTime={article.dateTime}>
-                    {article.createdAt}
-                  </time> */}
                 </a>
               </li>
             ))}
           </ol>
         </section>
-      </section>
 
-      <TrailCloud trails={TRAILS} />
-
-      <footer className="thinking-home__footer">
-        <span>© {CURRENT_YEAR} 我叫阿良</span>
-      </footer>
+        <footer className="thinking-home__footer">
+          <span>© {CURRENT_YEAR} 我叫阿良</span>
+        </footer>
+      </div>
     </main>
   )
 }

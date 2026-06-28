@@ -4,39 +4,27 @@ import { pluginSitemap } from '@rspress/plugin-sitemap'
 import { defineConfig } from '@rspress/core'
 import mermaid from 'rspress-plugin-mermaid'
 import {
-  d2PreRenderPlugin,
   type D2PreRenderOptions,
+  d2PreRenderPlugin,
 } from './plugins/d2PreRender'
-import { pluginImageZoom } from './plugins/imageZoom'
-import { pluginRoutePathRewrite } from './plugins/routePathRewrite'
 import {
-  AI_PATH,
-  CODE_PATH,
+  getWhitespaceMarkdownExcludePaths,
+  getDraftMarkdownExcludePaths,
+  getMermaidRoutePaths,
+  getGeneratedSidebar,
   EXPERIENCES_PATH,
   INTERVIEW_PATH,
-  getDraftMarkdownExcludePaths,
   getFirstLink,
-  getGeneratedSidebar,
-  getMermaidRoutePaths,
-  getSiteUrl,
-  getRouteUrl,
-  getWhitespaceMarkdownExcludePaths,
+  CODE_PATH,
+  AI_PATH,
 } from './utils'
+import { pluginRoutePathRewrite } from './plugins/routePathRewrite'
+import { pluginImageZoom } from './plugins/imageZoom'
+import { createSeoConfig } from './config/seo'
 
-const BASE_PATH = process.env.NODE_ENV === 'production' ? '/' : '/thinking/'
-const SITE_URL = 'https://thinking.youngluo.com'
-const SITE_ORIGIN = `${SITE_URL}${BASE_PATH}`
-const SITE_HOME_URL = getSiteUrl(SITE_ORIGIN)
-const SITE_TITLE = "Aliang's thinking"
-const SITE_DESCRIPTION =
-  '我叫阿良，这里记录前端、全栈、架构、与 AI Agent 的实践思考。'
-const SITE_KEYWORDS =
-  '前端,全栈,前端架构,React,Vue,TypeScript,JavaScript,AI Agent,LLM,技术笔记'
-const AUTHOR_NAME = '我叫阿良'
-const AUTHOR_ALTERNATE_NAMES = ['Young', 'youngluo']
-const AUTHOR_URL = `${SITE_HOME_URL}about`
-const GITHUB_PROFILE_URL = 'https://github.com/youngluo'
-const GITHUB_REPOSITORY_URL = 'https://github.com/youngluo/thinking'
+const IS_PROD = process.env.NODE_ENV === 'production'
+const BASE_PATH = IS_PROD ? '/' : '/thinking/'
+const SEO = createSeoConfig(BASE_PATH)
 const UMAMI_SCRIPT_URL = process.env.DOCS_UMAMI_SCRIPT_URL
 const UMAMI_WEBSITE_ID = process.env.DOCS_UMAMI_WEBSITE_ID
 const SIDEBAR_GROUP_ORDERS: Record<string, string[]> = {
@@ -84,61 +72,15 @@ export default defineConfig({
   root: '.',
   base: BASE_PATH,
   lang: 'zh',
-  title: SITE_TITLE,
-  description: SITE_DESCRIPTION,
+  title: SEO.siteTitle,
+  description: SEO.siteDescription,
   head: [
-    ['meta', { name: 'author', content: AUTHOR_NAME }],
-    ['meta', { name: 'keywords', content: SITE_KEYWORDS }],
-    ['meta', { name: 'robots', content: 'index,follow' }],
-    (route) => [
-      'link',
-      { rel: 'canonical', href: getRouteUrl(SITE_ORIGIN, route.routePath) },
-    ],
-    ['meta', { property: 'og:type', content: 'website' }],
-    ['meta', { property: 'og:site_name', content: SITE_TITLE }],
-    ['meta', { property: 'og:title', content: SITE_TITLE }],
-    ['meta', { property: 'og:description', content: SITE_DESCRIPTION }],
-    (route) => [
-      'meta',
-      {
-        property: 'og:url',
-        content: getRouteUrl(SITE_ORIGIN, route.routePath),
-      },
-    ],
-    ['meta', { property: 'og:locale', content: 'zh_CN' }],
-    ['meta', { name: 'twitter:card', content: 'summary' }],
-    ['meta', { name: 'twitter:title', content: SITE_TITLE }],
-    ['meta', { name: 'twitter:description', content: SITE_DESCRIPTION }],
+    ...SEO.head,
     ...(UMAMI_SCRIPT_URL && UMAMI_WEBSITE_ID
       ? [
           `<script defer src="${UMAMI_SCRIPT_URL}" data-website-id="${UMAMI_WEBSITE_ID}"></script>`,
         ]
       : []),
-    `<script type="application/ld+json">${JSON.stringify({
-      '@context': 'https://schema.org',
-      '@graph': [
-        {
-          '@type': 'Person',
-          '@id': `${AUTHOR_URL}#person`,
-          name: AUTHOR_NAME,
-          alternateName: AUTHOR_ALTERNATE_NAMES,
-          url: AUTHOR_URL,
-          sameAs: [GITHUB_PROFILE_URL, GITHUB_REPOSITORY_URL],
-        },
-        {
-          '@type': 'WebSite',
-          '@id': `${SITE_HOME_URL}#website`,
-          name: SITE_TITLE,
-          alternateName: 'Thinking',
-          description: SITE_DESCRIPTION,
-          url: SITE_HOME_URL,
-          author: {
-            '@id': `${AUTHOR_URL}#person`,
-          },
-          inLanguage: 'zh-CN',
-        },
-      ],
-    })}</script>`,
   ],
   ssg: {
     experimentalExcludeRoutePaths: getMermaidRoutePaths(),
@@ -146,12 +88,14 @@ export default defineConfig({
   route: {
     exclude: [
       'components/**',
+      'config/**',
       'doc_build/**',
       'plugins/**',
       'rspress.config.ts',
       'scripts/**',
       'theme/**',
       'utils.ts',
+      ...(IS_PROD ? ['code/**'] : []),
       ...getDraftMarkdownExcludePaths(),
       ...getWhitespaceMarkdownExcludePaths(),
     ],
@@ -160,15 +104,14 @@ export default defineConfig({
     nav: [
       { text: '前端思考', link: getFirstLink(experiences) },
       { text: 'AI', link: getFirstLink(ai) },
-      { text: '代码笔记', link: getFirstLink(code) },
-      { text: '面试题', link: getFirstLink(interview) },
-      { text: '关于', link: '/about' },
+      ...(IS_PROD ? [] : [{ text: '代码笔记', link: getFirstLink(code) }]),
+      ...(IS_PROD ? [] : [{ text: '面试题', link: getFirstLink(interview) }]),
     ],
     sidebar: {
       '/experiences/': experiences,
       '/ai/': ai,
-      '/code/': code,
-      '/interview/': interview,
+      ...(IS_PROD ? {} : { '/code/': code }),
+      ...(IS_PROD ? {} : { '/interview/': interview }),
     },
     // lastUpdated: true,
   },
@@ -181,7 +124,7 @@ export default defineConfig({
   plugins: [
     mermaid(),
     pluginSitemap({
-      siteUrl: SITE_HOME_URL,
+      siteUrl: SEO.siteHomeUrl,
     }),
     pluginRoutePathRewrite(),
     pluginImageZoom({
