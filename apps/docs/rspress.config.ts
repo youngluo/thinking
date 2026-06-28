@@ -27,7 +27,7 @@ const BASE_PATH = process.env.NODE_ENV === 'production' ? '/' : '/thinking/'
 const SITE_URL = 'https://thinking.youngluo.com'
 const SITE_ORIGIN = `${SITE_URL}${BASE_PATH}`
 const SITE_HOME_URL = getSiteUrl(SITE_ORIGIN)
-const SITE_TITLE = 'Thinking'
+const SITE_TITLE = "Aliang's thinking"
 const SITE_DESCRIPTION =
   '我叫阿良，这里记录前端、全栈、架构、与 AI Agent 的实践思考。'
 const SITE_KEYWORDS =
