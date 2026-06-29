@@ -26,8 +26,12 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
+      DOCS_GISCUS_CATEGORY_ID: ${{ vars.DOCS_GISCUS_CATEGORY_ID }}
       DOCS_UMAMI_SCRIPT_URL: ${{ vars.DOCS_UMAMI_SCRIPT_URL }}
       DOCS_UMAMI_WEBSITE_ID: ${{ vars.DOCS_UMAMI_WEBSITE_ID }}
+      DOCS_GISCUS_CATEGORY: ${{ vars.DOCS_GISCUS_CATEGORY }}
+      DOCS_GISCUS_REPO_ID: ${{ vars.DOCS_GISCUS_REPO_ID }}
+      DOCS_GISCUS_REPO: ${{ vars.DOCS_GISCUS_REPO }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5

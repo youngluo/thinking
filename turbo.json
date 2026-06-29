@@ -18,7 +18,14 @@
     },
     "docs:build": {
       "dependsOn": ["^build"],
-      "env": ["DOCS_UMAMI_SCRIPT_URL", "DOCS_UMAMI_WEBSITE_ID"],
+      "env": [
+        "DOCS_GISCUS_CATEGORY_ID",
+        "DOCS_UMAMI_WEBSITE_ID",
+        "DOCS_UMAMI_SCRIPT_URL",
+        "DOCS_GISCUS_CATEGORY",
+        "DOCS_GISCUS_REPO_ID",
+        "DOCS_GISCUS_REPO"
+      ],
       "outputs": ["doc_build/**"],
       "cache": true
     },

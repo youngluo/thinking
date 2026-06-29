@@ -3,7 +3,7 @@ createdAt: '2026-06-04 12:00'
 order: 3
 ---
 
-# React Reconcile
+# React Reconcile 实现
 
 协调阶段负责比较 `current Fiber` 和本轮渲染得到的 `nextChildren`，生成 `workInProgress Fiber`。入口在渲染阶段的 [beginWork](https://github.com/facebook/react/blob/main/packages/react-reconciler/src/ReactFiberBeginWork.js#L341)。
 

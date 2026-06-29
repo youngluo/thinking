@@ -3,6 +3,9 @@ import { pluginNodePolyfill } from '@rsbuild/plugin-node-polyfill'
 import { pluginSitemap } from '@rspress/plugin-sitemap'
 import { defineConfig } from '@rspress/core'
 import mermaid from 'rspress-plugin-mermaid'
+import { config as loadEnv } from 'dotenv'
+import { dirname, join } from 'path'
+import { fileURLToPath } from 'url'
 import {
   type D2PreRenderOptions,
   d2PreRenderPlugin,
@@ -21,6 +24,10 @@ import {
 import { pluginRoutePathRewrite } from './plugins/routePathRewrite'
 import { pluginImageZoom } from './plugins/imageZoom'
 import { createSeoConfig } from './config/seo'
+
+const CONFIG_DIR = dirname(fileURLToPath(import.meta.url))
+
+loadEnv({ path: join(CONFIG_DIR, '.env.local') })
 
 const IS_PROD = process.env.NODE_ENV === 'production'
 const BASE_PATH = IS_PROD ? '/' : '/thinking/'
@@ -117,6 +124,22 @@ export default defineConfig({
   },
   builderConfig: {
     plugins: [pluginNodePolyfill()],
+    source: {
+      define: {
+        'process.env.DOCS_GISCUS_REPO': JSON.stringify(
+          process.env.DOCS_GISCUS_REPO ?? ''
+        ),
+        'process.env.DOCS_GISCUS_REPO_ID': JSON.stringify(
+          process.env.DOCS_GISCUS_REPO_ID ?? ''
+        ),
+        'process.env.DOCS_GISCUS_CATEGORY': JSON.stringify(
+          process.env.DOCS_GISCUS_CATEGORY ?? ''
+        ),
+        'process.env.DOCS_GISCUS_CATEGORY_ID': JSON.stringify(
+          process.env.DOCS_GISCUS_CATEGORY_ID ?? ''
+        ),
+      },
+    },
     dev: {
       lazyCompilation: false,
     },
