@@ -34,6 +34,7 @@ const BASE_PATH = IS_PROD ? '/' : '/thinking/'
 const SEO = createSeoConfig(BASE_PATH)
 const UMAMI_SCRIPT_URL = process.env.DOCS_UMAMI_SCRIPT_URL
 const UMAMI_WEBSITE_ID = process.env.DOCS_UMAMI_WEBSITE_ID
+const INCLUDE_DRAFT = !IS_PROD
 const SIDEBAR_GROUP_ORDERS: Record<string, string[]> = {
   [EXPERIENCES_PATH]: [
     '架构',
@@ -70,10 +71,20 @@ const d2PreRenderOptions: D2PreRenderOptions = {
   `,
 }
 
-const experiences = getGeneratedSidebar(EXPERIENCES_PATH, SIDEBAR_GROUP_ORDERS)
-const ai = getGeneratedSidebar(AI_PATH, SIDEBAR_GROUP_ORDERS)
-const code = getGeneratedSidebar(CODE_PATH, SIDEBAR_GROUP_ORDERS)
-const interview = getGeneratedSidebar(INTERVIEW_PATH, SIDEBAR_GROUP_ORDERS)
+const experiences = getGeneratedSidebar(
+  EXPERIENCES_PATH,
+  SIDEBAR_GROUP_ORDERS,
+  { includeDraft: INCLUDE_DRAFT }
+)
+const ai = getGeneratedSidebar(AI_PATH, SIDEBAR_GROUP_ORDERS, {
+  includeDraft: INCLUDE_DRAFT,
+})
+const code = getGeneratedSidebar(CODE_PATH, SIDEBAR_GROUP_ORDERS, {
+  includeDraft: INCLUDE_DRAFT,
+})
+const interview = getGeneratedSidebar(INTERVIEW_PATH, SIDEBAR_GROUP_ORDERS, {
+  includeDraft: INCLUDE_DRAFT,
+})
 
 export default defineConfig({
   root: '.',
@@ -103,8 +114,8 @@ export default defineConfig({
       'theme/**',
       'utils.ts',
       ...(IS_PROD ? ['code/**'] : []),
-      ...getDraftMarkdownExcludePaths(),
-      ...getWhitespaceMarkdownExcludePaths(),
+      ...(IS_PROD ? getDraftMarkdownExcludePaths() : []),
+      ...getWhitespaceMarkdownExcludePaths(INCLUDE_DRAFT),
     ],
   },
   themeConfig: {

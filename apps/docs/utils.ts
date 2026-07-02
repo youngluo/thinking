@@ -19,7 +19,12 @@ type MarkdownMeta = {
 type MarkdownPage = MarkdownMeta & {
   group: string
   link: string
+  sidebarText: string
   text: string
+}
+
+type GeneratedSidebarOptions = {
+  includeDraft?: boolean
 }
 
 export type SidebarItem =
@@ -129,6 +134,10 @@ function getPublishedMarkdownFiles(dir: string) {
   )
 }
 
+function getVisibleMarkdownFiles(dir: string, includeDraft = false) {
+  return includeDraft ? getMarkdownFiles(dir) : getPublishedMarkdownFiles(dir)
+}
+
 function compareText(first: string, second: string) {
   return first.localeCompare(second, 'zh-CN')
 }
@@ -196,21 +205,29 @@ function compareSidebarGroup(
 
 export function getGeneratedSidebar(
   path: string,
-  sidebarGroupOrders: Record<string, string[]>
+  sidebarGroupOrders: Record<string, string[]>,
+  options: GeneratedSidebarOptions = {}
 ): SidebarItem[] {
   const baseDir = join(DOCS_ROOT, path)
-  const pages = getPublishedMarkdownFiles(baseDir).map((filePath) => {
-    const routePath = toPublicRoutePath(toRoutePath(filePath))
-    const relativePath = relative(baseDir, filePath).split(sep)
-    const text = relativePath.at(-1)!.replace(/\.md$/, '')
+  const pages = getVisibleMarkdownFiles(baseDir, options.includeDraft).map(
+    (filePath) => {
+      const meta = getMarkdownMeta(filePath)
+      const routePath = toPublicRoutePath(toRoutePath(filePath))
+      const relativePath = relative(baseDir, filePath).split(sep)
+      const text = relativePath.at(-1)!.replace(/\.md$/, '')
 
-    return {
-      ...getMarkdownMeta(filePath),
-      group: relativePath.length > 1 ? relativePath[0] : text,
-      link: routePath,
-      text,
+      return {
+        ...meta,
+        group: relativePath.length > 1 ? relativePath[0] : text,
+        link: routePath,
+        sidebarText:
+          options.includeDraft && meta.draft === true
+            ? `${text}（草稿）`
+            : text,
+        text,
+      }
     }
-  })
+  )
 
   const groups = new Map<string, MarkdownPage[]>()
 
@@ -226,13 +243,13 @@ export function getGeneratedSidebar(
       const sortedItems = [...items].sort(compareMarkdownPage)
 
       if (sortedItems.length === 1 && sortedItems[0].text === text) {
-        return { text, link: sortedItems[0].link }
+        return { text: sortedItems[0].sidebarText, link: sortedItems[0].link }
       }
 
       return {
         text,
         items: sortedItems.map((item) => ({
-          text: item.text,
+          text: item.sidebarText,
           link: item.link,
         })),
       }
@@ -249,14 +266,14 @@ export function getMermaidRoutePaths() {
     .map((filePath) => toPublicRoutePath(toRoutePath(filePath)))
 }
 
-function getWhitespaceMarkdownFiles() {
+function getWhitespaceMarkdownFiles(includeDraft = false) {
   return CONTENT_PATHS.flatMap((dir) =>
-    getPublishedMarkdownFiles(join(DOCS_ROOT, dir))
+    getVisibleMarkdownFiles(join(DOCS_ROOT, dir), includeDraft)
   ).filter((filePath) => /\s/.test(toRoutePath(filePath)))
 }
 
-export function getWhitespaceMarkdownExcludePaths() {
-  return getWhitespaceMarkdownFiles().map((filePath) =>
+export function getWhitespaceMarkdownExcludePaths(includeDraft = false) {
+  return getWhitespaceMarkdownFiles(includeDraft).map((filePath) =>
     relative(DOCS_ROOT, filePath).split(sep).join('/')
   )
 }

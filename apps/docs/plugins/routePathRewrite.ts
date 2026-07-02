@@ -10,6 +10,7 @@ const AI_PATH = 'ai'
 const CODE_PATH = 'code'
 const INTERVIEW_PATH = 'interview'
 const CONTENT_PATHS = [EXPERIENCES_PATH, AI_PATH, CODE_PATH, INTERVIEW_PATH]
+const IS_PROD = process.env.NODE_ENV === 'production'
 
 function sanitizeRoutePath(pathname: string) {
   return pathname.replace(/\s+/g, '_')
@@ -56,6 +57,10 @@ function getPublishedMarkdownFiles(dir: string) {
   )
 }
 
+function getVisibleMarkdownFiles(dir: string) {
+  return IS_PROD ? getPublishedMarkdownFiles(dir) : getMarkdownFiles(dir)
+}
+
 function parseInternalUrl(url: string) {
   const [pathnameWithSearch, hash = ''] = url.split('#')
   const [pathname, search = ''] = pathnameWithSearch.split('?')
@@ -98,7 +103,7 @@ function toPublicMarkdownUrl(url: string, filePath: string) {
 
 function getWhitespaceMarkdownFiles() {
   return CONTENT_PATHS.flatMap((dir) =>
-    getPublishedMarkdownFiles(join(DOCS_ROOT, dir))
+    getVisibleMarkdownFiles(join(DOCS_ROOT, dir))
   ).filter((filePath) => /\s/.test(toRoutePath(filePath)))
 }
 

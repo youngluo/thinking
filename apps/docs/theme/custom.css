@@ -27,5 +27,29 @@
 }
 
 .doc-comments {
-  margin-top: 20px;
+  margin-top: 32px;
+}
+
+.draft-notice {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 10px 12px;
+  margin-bottom: 20px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: #7a4b00;
+  background: #fff7d6;
+  border: 1px solid #f0c36a;
+  border-radius: 6px;
+}
+
+.draft-notice strong {
+  flex: none;
+  padding: 1px 7px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #ffffff;
+  background: #b7791f;
+  border-radius: 999px;
 }
