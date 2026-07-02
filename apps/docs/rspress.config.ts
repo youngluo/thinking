@@ -23,6 +23,7 @@ import {
 } from './utils'
 import { pluginRoutePathRewrite } from './plugins/routePathRewrite'
 import { pluginImageZoom } from './plugins/imageZoom'
+import { pluginHtmlMinifier } from './plugins/htmlMinifier'
 import { createSeoConfig } from './config/seo'
 
 const CONFIG_DIR = dirname(fileURLToPath(import.meta.url))
@@ -134,7 +135,7 @@ export default defineConfig({
     // lastUpdated: true,
   },
   builderConfig: {
-    plugins: [pluginNodePolyfill()],
+    plugins: [pluginNodePolyfill(), ...(IS_PROD ? [pluginHtmlMinifier()] : [])],
     source: {
       define: {
         'process.env.DOCS_GISCUS_REPO': JSON.stringify(
