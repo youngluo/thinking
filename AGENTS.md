@@ -10,6 +10,7 @@
 
 - 默认不要自动使用 superpowers skill；只有用户或项目文档明确要求时才使用。
 - 所有 shell 命令必须按 RTK 规则加 `rtk` 前缀。
+- 修改文档后不要自动执行 `rtk pnpm docs:build`；只有用户明确要求验证构建时才运行。
 
 ## 常用命令
 
@@ -119,7 +120,7 @@ Rspress 文档位于 `apps/docs/`。文档生成脚本是 `scripts/generate-docs
 
 编写 blog 或技术文章时：
 
-- 不要为了引出正确说法而凭空构造不存在或不常见的反面判断。如果需要对比，应对比真实存在的 API、配置或常见误解，并说明来源或上下文。
+- 新建文章的 frontmatter 默认设置 `draft: true`，`createdAt` 使用创建文件时的当前时间，格式为 `YYYY-MM-DD HH:mm`。
 
 ## D2 规范
 
