@@ -8,7 +8,7 @@
 
 本文件为在此仓库中工作的编码代理提供项目指导。
 
-- 默认不要自动使用 superpowers skill；只有用户或项目文档明确要求时才使用。
+- 默认不要自动使用 superpowers skill；只有用户或项目文档明确要求时才使用；如果是 apps/docs/ 下的文档编写，则只是有 brainstorm skill，跳过其它与文档无关的 skill。
 - 所有 shell 命令必须按 RTK 规则加 `rtk` 前缀。
 - 修改文档后不要自动执行 `rtk pnpm docs:build`；只有用户明确要求验证构建时才运行。
 
