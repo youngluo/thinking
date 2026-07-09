@@ -124,6 +124,7 @@ Rspress 文档位于 `apps/docs/`。文档生成脚本是 `scripts/generate-docs
 
 ## D2 规范
 
+- 表示流程（如数据流、调用链、状态转换、流水线步骤）时，避免使用 ```text 代码块，应优先使用 d2 图。
 - 只统一少量语义节点的背景色，不限制 D2 的结构、方向、布局、节点组织方式和默认样式。
 - D2 全局渲染参数统一配置在 `apps/docs/rspress.config.ts` 的 `d2PreRenderOptions` 中，不要在单篇文档里重复声明全局样式。
 - `d2PreRenderOptions` 统一使用：
