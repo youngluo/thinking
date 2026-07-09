@@ -18,11 +18,13 @@ type MarkdownFile = {
 export type D2PreRenderOptions = CompileOptions & {
   padX?: number
   prelude?: string
+  maxHeight?: number
 }
 
 type PreparedD2Block = {
   code: string
   padX?: number
+  maxHeight?: number
   options: CompileOptions
 }
 
@@ -49,7 +51,8 @@ function getBlockCacheKey(
   filePath: string,
   code: string,
   options: CompileOptions,
-  padX?: number
+  padX?: number,
+  maxHeight?: number
 ) {
   return createHash('sha256')
     .update(filePath)
@@ -59,6 +62,8 @@ function getBlockCacheKey(
     .update(JSON.stringify(options))
     .update('\0')
     .update(String(padX ?? ''))
+    .update('\0')
+    .update(String(maxHeight ?? ''))
     .digest('hex')
 }
 
@@ -121,6 +126,14 @@ function addSvgPadX(svg: string, padX?: number) {
     )
 }
 
+function addSvgMaxHeight(svg: string, maxHeight?: number) {
+  if (!maxHeight || maxHeight <= 0) {
+    return svg
+  }
+
+  return svg.replace(/<svg\b/, `<svg style="max-height: ${maxHeight}px"`)
+}
+
 function parsePadX(meta?: string) {
   if (!meta) {
     return undefined
@@ -137,17 +150,34 @@ function parsePadX(meta?: string) {
   return Number.isFinite(value) && value > 0 ? value : undefined
 }
 
+function parseMaxHeight(meta?: string) {
+  if (!meta) {
+    return undefined
+  }
+
+  const match = meta.match(/(?:^|\s)maxHeight=(\d+(?:\.\d+)?)(?:\s|$)/)
+
+  if (!match) {
+    return undefined
+  }
+
+  const value = Number(match[1])
+
+  return Number.isFinite(value) && value > 0 ? value : undefined
+}
+
 function prepareD2Block(
   code: string,
   options: D2PreRenderOptions,
   meta?: string
 ): PreparedD2Block {
-  const { padX, prelude, ...d2Options } = options
+  const { padX, maxHeight, prelude, ...d2Options } = options
   const content = code.trim()
 
   return {
     code: [prelude?.trim(), content].filter(Boolean).join('\n\n'),
     padX: parsePadX(meta) ?? padX,
+    maxHeight: parseMaxHeight(meta) ?? maxHeight,
     options: {
       ...defaultRenderOptions,
       ...d2Options,
@@ -223,7 +253,8 @@ async function renderD2(
       filePath,
       prepared.code,
       prepared.options,
-      prepared.padX
+      prepared.padX,
+      prepared.maxHeight
     )
     const cached = renderCache.get(cacheKey)
 
@@ -244,10 +275,11 @@ async function renderD2(
       })
     })
     const normalizedSvg = addSvgPadX(svg, prepared.padX)
+    const finalSvg = addSvgMaxHeight(normalizedSvg, prepared.maxHeight)
 
-    assertSafeSvg(normalizedSvg, filePath, blockIndex)
+    assertSafeSvg(finalSvg, filePath, blockIndex)
 
-    const html = `<div class="d2-diagram" role="img">${normalizedSvg}</div>`
+    const html = `<div class="d2-diagram" role="img">${finalSvg}</div>`
     renderCache.set(cacheKey, html)
 
     return html
