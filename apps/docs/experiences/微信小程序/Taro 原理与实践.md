@@ -13,7 +13,7 @@ draft: true
 
 ## Taro 1/2 编译时架构
 
-Taro 1/2 的核心思路，是在编译期分析 JSX，把组件结构提前转换成小程序能识别的 WXML/WXSS/JS。运行时不需要维护虚拟 DOM，React 写法和小程序产物之间的差异主要在构建阶段被消化掉。
+Taro 1/2 的核心思路，是在编译时分析 JSX，把组件结构提前转换成小程序能识别的 WXML/WXSS/JS。运行时不需要维护虚拟 DOM，React 写法和小程序产物之间的差异主要在构建阶段被消化掉。
 
 ```d2
 direction: right
@@ -24,7 +24,7 @@ source: 业务代码 {
   input: JSX / 小程序 API 调用
 }
 
-compile: 编译期 {
+compile: 编译时 {
   class: group
 
   parse: 解析
@@ -78,8 +78,8 @@ compile.emit -> target.files: 生成
 
 `className` 会编译成小程序模板的 `class`，`onClick` 会编译成 `bindtap`，子组件和属性同样按小程序模板语法生成。其中：
 
-- 静态部分直接写进模板字符串，`<view class="box">` 这类字面量在编译期就能定下来；
-- 动态部分通过 `{{}}` 数据绑定落地，对应字段被加到 `data` 上；
+- 静态部分直接写进模板字符串，`<view class="box">` 这类字面量在编译时就能定下来；
+- 动态部分通过 `{{}}` 绑定模板数据，对应字段被加到 `data` 上；
 - 事件回调按模板事件名挂载。`onClick` 编译成 `bindtap`，`onInput` 编译成 `bindinput`，`onChange` 编译成 `bindchange`；页面模板里的 `bindtap="handleTap"` 会调用 `Page({ handleTap() {} })` 上的同名函数，组件模板里的同名事件会调用 `Component({ methods: { handleTap() {} } })` 中的方法。`catch*` 前缀的事件不冒泡，相当于 `stopPropagation`。
 
 ```js
@@ -130,198 +130,238 @@ Component({
 
 这套“模板级”表达力有一个硬边界：模板能承载的主要是“数据 + 字符串模板”，不能像 JSX 那样用函数在运行时返回新的组件树。编译器也无法在运行时补出模板里没有声明过的结构。这一限制直接推动了 Taro 3 的架构重写。
 
-### 跨端走插件机制
+### 跨端构建机制
 
-Taro 1/2 的跨端策略是“构建期决定目标平台”。`@tarojs/plugin-platform-weapp`、`@tarojs/plugin-platform-h5`、`@tarojs/plugin-platform-rn` 等平台插件，分别负责把同一份中间产物生成对应平台的最终文件。
+前面以微信小程序为例讲了模板转换；放到跨端场景里，区别在于构建命令会先确定目标平台，后续生成阶段再选择对应的平台适配逻辑。
 
 ```d2
 direction: right
 
 source: JSX 源码
-core: 框架核心编译
-mid: 平台无关中间产物
-weapp: weapp 插件
-h5: h5 插件
-rn: rn 插件
+core: AST 解析与转换
+weapp: weapp 代码生成
+h5: h5 代码生成
+rn: rn 代码生成
 wa_out: 微信小程序产物
 h5_out: H5 产物
 rn_out: RN 产物
 
-source -> core -> mid
-mid -> weapp -> wa_out
-mid -> h5 -> h5_out
-mid -> rn -> rn_out
+source -> core
+core -> weapp -> wa_out
+core -> h5 -> h5_out
+core -> rn -> rn_out
 ```
 
-平台差异由插件集中处理，业务代码不感知目标平台。
+不同平台适配逻辑会输出不同产物：weapp 生成 WXML/WXSS/JS/JSON，H5 生成 Web 产物，RN 生成面向 React Native 的 JS bundle 和组件调用。Taro 1/2 仍有公共运行时代码，用来承接 API 调用、生命周期和事件等能力。业务代码可以尽量保持同构，平台专有能力再通过条件编译或业务封装收口。
 
 ### Taro 1/2 的优势
 
-- **运行时轻**：没有虚拟 DOM、没有 reconciler，小程序运行时几乎不知道框架存在；
-- **包体积小**：编译产物是小程序原生文件，没有额外的 runtime 字节；
-- **性能接近“原生”**：`setData` 由业务显式控制，粒度由业务自己掌握。
+- **运行时链路短**：UI 结构已在编译时生成平台产物，运行时主要处理 API、生命周期和事件桥接；
+- **贴近原生模型**：小程序端产物以 WXML/WXSS/JS/JSON 为主，直接接入平台的模板和数据绑定机制；
+- **更新成本可控**：模板结构提前确定，运行时主要更新数据字段，`setData` 路径更容易和模板绑定对应。
 
-这套架构很契合小程序“模板 + 数据绑定”的范式，也是 Taro 在 2018 年开源后快速流行的原因，早期主要在京东内部和前端社区传播。
+这套架构的优势来自编译时转换；同样，限制也来源于此。
 
 ## 为什么换架构
 
-Taro 1/2 在工程规模上来之后，会撞到表达力墙。最常见的限制集中在两处：模板表达力和跨端维护成本。
-
-```d2
-direction: down
-
-drivers: 限制 {
-  class: group
-
-  A: 表达力受限
-  B: 跨端成本
-}
-
-A -> result
-B -> result
-
-result: Taro 3: 运行时架构
-```
+随着工程规模扩大，Taro 1/2 的编译时架构会逐渐暴露三类问题：模板表达力受限、构建产物膨胀，以及跨端维护成本上升。
 
 ### 表达力受限
 
-模板把“组件树”降级成“数据 + 字符串模板”，既写不出 JSX 那种“返回组件树”的函数，也难以表达运行时决定的 UI 结构。具体有两类问题：
+Taro 1/2 的模板转换有一个天然边界：编译器必须提前看见组件结构，才能生成目标平台模板。已知节点的显隐和重复可以交给 `wx:if`、`wx:for` 这类模板指令处理；但如果组件类型、嵌套层级或结构形状要到运行时才确定，模板就很难像 JSX 一样自由表达组件树。具体有两类问题：
 
-- **JS 层惯用法缺位**：高阶组件、render props、动态组件类型、条件渲染嵌套这些惯用法，要么用“配置式”写法代替，一份声明描述所有可能节点；要么直接放弃；
-- **运行时结构受限**：动态表单、权限化 UI、插件化页面都依赖运行时数据驱动；Taro 1/2 倾向于把所有可能性都枚举进模板，结构调整空间有限。
+- **语法表达受限**：上层 DSL 最终要转换成目标平台模板，不能跳出平台模板的表达范围；如果组件结构要到运行时才确定，编译器就很难提前生成完整模板；
+- **运行时结构受限**：动态表单、权限化 UI、插件化页面往往由配置决定组件类型和嵌套关系；而 Taro 1/2 需要提前在模板里声明可能出现的结构，后续调整空间有限。
+
+### 产物膨胀
+
+编译时模板转换会按组件结构生成平台产物，业务越复杂，生成代码越多，整体包体积也会随之增长；Taro 3 虽然增加了 runtime 成本，但业务 UI 结构主要由运行时维护，规模上来后体积优势会逐渐显现。
 
 ### 跨端成本
 
-不同平台模板的差异不是语法糖差异，而是模型差异。同一段 React 组件代码，编译到 weapp 是 WXML，编译到 H5 是 HTML + JS，编译到 RN 是原生组件声明。这带来两层成本：
+跨端代码能保持一套写法，但平台差异不会消失，只是转移到编译器、平台适配层和业务约束里。成本主要体现在两方面：
 
-- **能力不对齐，维护成本随平台数增长**：A 平台能用的语法在 B 平台可能没有对应物；每多一个平台就要多考虑一套限制；
-- **调试与生态割裂**：组件被拆成 wxml/wxss/js/json 四个文件后，运行时错误堆栈只能指到编译产物里的 JS 行号，模板或编译期错误直接指向 wxml 行号，两者都不容易映射回 JSX 源文件。第三方组件库也要写多套。
+- **能力不对齐，维护成本随平台数增长**：组件、样式、事件和宿主 API 在不同平台上不完全等价；每多一个目标平台，就要多维护一套映射规则和兼容边界；
+- **调试与生态割裂**：源码被拆成目标平台产物后，错误可能出现在 JS、模板或样式文件里，定位时需要在源码和生成文件之间来回映射。第三方组件库也需要满足各平台的组件和样式约束。
 
 ## Taro 3 运行时架构
 
-Taro 3 翻转了架构：**编译时主要负责打包和小程序能力注入，运行期把 React 组件树挂载到小程序 Page/Component 模型上**。这一节展开核心机制。
+Taro 3 不再在编译时把业务 UI 转成目标平台模板，而是在运行时把框架组件树同步到目标平台。运行链路可以拆成四段：框架层业务代码、renderer、`taro-runtime` 和目标平台适配。
 
 ```d2
 direction: down
 
-compile: 编译期 {
+framework:  业务代码 {
   class: group
 
-  dsl: JSX 模板
-  js: 转译为 JS
-  inject: 小程序能力注入
+  react: React
+  vue: Vue3
+  solid: Solid
 }
 
-runtime: 运行期 {
+renderer: 框架渲染器 {
   class: group
 
-  reconcile: Reconciler
-  dom: Taro DOM 树
-  bridge: 小程序端 Bridge
-  endinst: 小程序组件实例
+  react: '@tarojs/react'
+  vue: Vue3 自带
+  solid: Solid 自带
 }
-
-end: 运行平台 {
-  class: group
-
-  weapp: 微信小程序
-  h5: H5
-  rn: React Native
-  harmony: Harmony
-}
-
-compile.dsl -> compile.js
-compile.dsl -> compile.inject
-compile.js -> runtime.reconcile
-compile.inject -> runtime.bridge
-runtime.reconcile -> runtime.dom
-runtime.dom -> runtime.bridge
-runtime.bridge -> endinst
-endinst -> end.weapp
-endinst -> end.h5
-endinst -> end.rn
-endinst -> end.harmony
-```
-
-### 整体架构
-
-Taro 3 的运行时分三层：
-
-```d2
-direction: down
 
 core: taro-runtime {
   class: group
 
-  dom: Taro DOM 抽象
-  reconcile: Reconciler
+  dom: Taro DOM / BOM
+  b: 页面 / 组件配置创建
+  c: 生命周期桥接
   event: 事件系统
-  schedule: setData 调度
+  schedule: Hydrate 序列化
 }
 
-adapter: 平台 runtime {
+platform: 平台渲染器 {
   class: group
 
   weapp: 微信小程序
-  h5: H5
+  web: Web
   rn: React Native
 }
 
-app: 业务代码
-
-core -> adapter: 输出 Taro DOM 与 setData
-adapter -> app: 接管 Page / Component 生命周期
+framework -> renderer
+renderer -> core: reconciler
+core -> platform: Taro DOM 变更与事件分发
+platform -> core: 平台生命周期与事件
 ```
 
-- **`taro-runtime`**：与平台无关的核心，包含 Taro DOM 抽象、renderer 接入、事件系统和 `setData` 调度；
-- **平台 runtime**：weapp、h5、rn 等平台由 `@tarojs/plugin-platform-*` 提供适配，把 Taro DOM 树映射到对应平台的组件实例，承接平台事件，再回调 `taro-runtime`；
-- **业务代码**：用 React 写组件，平台 runtime 接管平台生命周期后，再把生命周期桥接给业务框架。
+- **业务代码 / 框架层**：业务仍按 React、Vue 等框架写组件，状态更新先进入对应框架的渲染流程；
+- **框架渲染器**：把框架侧的更新接入 Taro。React 侧通过 `@tarojs/react` 和 reconciler 工作；Vue、Solid 等框架也会通过各自接入层把更新转成 Taro 可处理的操作；
+- **`taro-runtime`**：与平台无关的核心，维护 Taro DOM / BOM 抽象，并承接页面 / 组件配置创建、生命周期桥接、事件系统和更新序列化；
+- **平台渲染器**：微信小程序、Web、RN 等平台把 Taro DOM 变更同步到宿主环境，并把平台生命周期和事件回传给 `taro-runtime`。
 
 ### 编译时职责
 
-Taro 3 的编译时不再把业务 JSX 模板逐组件翻译成小程序模板，主要产出 JS 代码，并注入小程序相关能力。小程序端仍会生成运行所需的基础模板、配置和宿主文件，只是业务 UI 结构主要交给运行时维护。
+Taro 3 仍然保留编译阶段，但重点转向为运行时准备小程序侧静态产物，主要包括四类：
+
+- **动态模板**：生成可复用的组件模板，提前声明节点类型、属性绑定和 `children` 递归位置；
+- **平台配置**：根据应用、页面、组件和插件配置生成 `app.json`、页面 `json`、组件引用等配置文件；
+- **平台入口**：生成应用、页面和组件入口，建立小程序文件与业务模块之间的引用关系；
+- **JS 产物**：打包业务代码、框架 renderer、`taro-runtime` 和小程序端适配代码。
+
+动态模板是这里最关键的差异。小程序模板仍然需要提前存在，所以 Taro 3 会生成一组通用模板，提前声明常见节点类型以及父子递归关系。运行时再把 Taro DOM 树序列化成数据，驱动这些模板渲染出真实视图。它和 Taro 1/2 的区别在于：模板不再对应具体业务组件结构，而是对应运行时可复用的节点描述。
+
+简化后可以理解成下面这种结构：
+
+```xml
+<template name="tpl_view">
+  <view
+    id="{{ uid }}"
+    class="{{ className }}"
+    style="{{ style }}"
+    hover-class="{{ hoverClass }}"
+    hover-stop-propagation="{{ hoverStopPropagation }}"
+    hover-start-time="{{ hoverStartTime || 50 }}"
+    hover-stay-time="{{ hoverStayTime || 400 }}"
+  >
+    <block wx:for="{{ children }}" wx:key="uid">
+      <template is="{{ 'tpl_' + item.nodeName }}" data="{{ item }}" />
+    </block>
+  </view>
+</template>
+```
+
+这里的 `tpl_view` 对应小程序 `view` 组件，`children` 保存子节点数据，`nodeName` 决定继续调用 `tpl_text`、`tpl_image` 等其它模板。真实产物会比这个复杂，也会包含事件、属性、组件类型等更多字段；但核心思路相同：模板先提供可复用的节点渲染结构，运行时再用 Taro DOM 数据决定这次渲染哪些节点、节点之间如何嵌套。
+
+### Taro DOM 抽象
+
+动态模板解决的是“小程序模板需要提前存在”的问题，Taro DOM 解决的是“框架 renderer 要操作什么”的问题。小程序逻辑层没有浏览器 DOM/BOM，Taro 运行时会提供一套精简版 DOM/BOM API，例如 `document`、`appendChild`、`insertBefore`、`removeChild`、`setAttribute` 等，并在 Webpack 构建下通过 ProvidePlugin 注入到逻辑层代码里。这样 renderer 可以像操作真实 DOM 一样提交更新，这些调用最终会修改内存中的 Taro DOM 树。
 
 ```d2
 direction: right
 
-dsl: JSX 模板
-compiler: 框架编译器
-js: 调用 Taro runtime API 的 JS
-inject: 小程序能力注入
-output: JS 产物
+event: TaroEventTarget {
+  shape: class
 
-dsl -> compiler -> js -> inject -> output
-```
-
-- **组件标签**：`import { View, Text } from '@tarojs/components'`，业务侧仍按 React 组件使用，运行时再映射到小程序组件实例；
-- **属性传递**：`onClick={fn}` 仍然写在 JSX 上，但事件会进入 Taro DOM 节点的事件代理链路，而不是简单编译成 `bindtap`；
-- **小程序能力**：`Taro.request`、`Taro.getStorage` 这类 API 由平台插件和小程序端 runtime 适配到小程序原生实现。
-
-业务代码、组件库和主要构建产物在 Taro 3 下更接近普通 JS 包。Taro 仍然有“编译”，但它的角色从“把业务模板翻译成小程序模板”转向“打包、代码转换和小程序能力注入”。
-
-### Taro DOM 抽象
-
-Taro 的运行时没有浏览器 DOM，也不直接操作小程序 Page/Component 节点。Taro 在内存里维护一棵 Taro DOM 树，节点类型对应小程序组件。
-
-```d2
-direction: down
-
-dom: Taro DOM 树 {
-  class: group
-
-  page: 页面节点
-  comp: 自定义组件节点
-  view: 视图节点
-  text: 文本节点
-  image: 图像节点
+  addEventListener()
+  removeEventListener()
 }
+
+node: TaroNode {
+  shape: class
+
+  +uid: string
+  +nodeType: NodeType
+  +nodeName: string
+  +parentNode: "TaroNode | null"
+  +childNodes: "TaroNode[]"
+  +nextSibling: "TaroNode | null"
+  +previousSibling: "TaroNode | null"
+  +firstChild: "TaroNode | null"
+  +lastChild: "TaroNode | null"
+  +ownerDocument: TaroDocument
+  +appendChild(child\: TaroNode)
+  +removeChild(child\: TaroNode, options?) : TaroNode
+  +insertBefore(child\: TaroNode, refChild?\: TaroNode)
+  +replaceChild(newChild\: TaroNode, oldChild\: TaroNode) : TaroNode
+  +remove(options?\: RemoveChildOptions)
+  +hasChildNodes() : boolean
+  +enqueueUpdate(payload\: UpdatePayload)
+}
+
+element: TaroElement {
+  shape: class
+
+  +ctx: MpInstance
+  +tagName: string
+  +props: "Record<string, any>"
+  +style: Style
+  +dataset: "Record<string, unknown>"
+  +innerHTML: string
+  +id: string
+  +className: string
+  +classList: ClassList
+  +children: "TaroElement[]"
+  +attributes: "Attributes[]"
+  +textContent: string
+  +hasAttribute(qualifiedName\: string) : boolean
+  +hasAttributes() : boolean
+  +getAttribute(qualifiedName\: string) : string
+  +setAttribute(name\: string, value\: any)
+  +getElementsByTagName(tagName\: string) : "TaroElement[]"
+  +dispatchEvent(event\: TaroEvent) : boolean
+  -_stopPropagation(event\: TaroEvent)
+}
+
+text: TaroText {
+  shape: class
+
+  textContent: string
+  nodeValue: string
+  nodeType: NodeType.TEXT_NODE
+  nodeName: '#text'
+}
+
+root: TaroRootElement {
+  shape: class
+
+  +updatePayloads: "UpdatePayload[]"
+  +updateCallbacks: "TFunc[]"
+  +pendingUpdate: boolean
+  +ctx: "MpInstance | null"
+  +scheduleTask(fn\: TFunc)
+  +enqueueUpdate(payload\: UpdatePayload)
+  +performUpdate(initRender, prerender)
+}
+
+node -> event: extends
+element -> node: extends
+text -> node: extends
+root -> element: extends
 ```
 
-- **节点类型**：内置组件（`view`、`text`、`image`）、自定义组件和文本节点；
-- **属性**：每个节点持有 props，包括 `className`、`style`、`src`、事件回调等；
-- **树形结构**：父子关系对应 JSX 嵌套，列表渲染的 key 在这里依然承担身份标识。
+- **DOM/BOM 入口**：提供 `document`、节点创建、插入和删除等 API，让 renderer 有稳定的宿主接口；
+- **节点模型**：用 `TaroNode`、`TaroElement`、`TaroText` 描述元素、文本、父子关系和兄弟关系；
+- **属性与事件**：在 `TaroElement` 上保存 `props`、`className`、`style`、事件监听和事件派发信息；
+- **更新调度**：由 `TaroRootElement` 负责收集和批量处理 DOM 更新，通过 `performUpdate()` 生成小程序 `setData` 所需的数据，`scheduleTask()` 负责异步调度，减少高频 `setData`。
 
-这棵 DOM 树是 renderer 工作的基础，也是 `setData` 调度生成补丁的对象。
+这就是 Taro DOM 的核心价值：上层框架只需要面向一个稳定的宿主环境提交更新，底层再把 Taro DOM 变更序列化成动态模板需要的数据。下一步，小程序端 runtime 会根据这棵树生成 `setData` 数据补丁。
 
 ### Reconciler 与组件挂载
 
@@ -450,7 +490,7 @@ core.api -> end.rn
 
 ### Taro 3 的代价
 
-- **运行期有 renderer 和适配层**：调度开销比 Taro 1/2 大，包体积也更大；
+- **运行时有 renderer 和适配层**：调度开销比 Taro 1/2 大，包体积也更大；
 - **`setData` 由框架合批**：业务需要理解“什么时候会触发 `setData`”，写出“少变更、少引用变化”的代码；
 - **仍有小程序能力边界**：部分小程序原生能力需要运行时特殊处理才能用，比如同层渲染、`cover-view` 等。
 
@@ -662,7 +702,7 @@ function setupErrorReport() {
 
 ## 跨端方案对比
 
-对比跨端方案时，先看两个问题：框架层主要放在编译期还是运行期，以及 DSL 给业务保留多少自由度。下面的比较以小程序场景为主，具体选型仍要回到目标平台、版本和团队技术栈。
+对比跨端方案时，先看两个问题：框架层主要放在编译时还是运行时，以及 DSL 给业务保留多少自由度。下面的比较以小程序场景为主，具体选型仍要回到目标平台、版本和团队技术栈。
 
 ### 架构总览
 
