@@ -5,7 +5,7 @@ draft: true
 
 # Taro 原理与实践
 
-跨端框架在小程序端要解决的问题，不是把 Web 页面搬进小程序，而是让一份 React 代码跑在多种非浏览器运行时上。每种运行时都有自己的组件模型、样式系统、宿主 API 和线程模型。框架真正要做的，是把上层 DSL 转成运行时能识别的组件、样式和 API 调用。
+跨端框架在小程序端要解决的问题，不是把 Web 页面搬进小程序，而是让同一份 React 或 Vue 代码跑在多种非浏览器运行时上。每种运行时都有自己的组件模型、样式系统、宿主 API 和线程模型。框架真正要做的，是把上层 DSL 转成运行时能识别的组件、样式和 API 调用。
 
 围绕这件事，Taro 前后采用过两种架构：Taro 1/2 以**编译时模板转换**为核心，Taro 3+ 转向**运行时适配**。沿着这条演进线看，Taro 为什么换架构、运行时做了什么、工程里该怎么取舍，都会更清楚。
 
@@ -115,7 +115,7 @@ Component({
 </view>
 ```
 
-三元表达式、逻辑与表达式和 `if` 分支会被转换成 `wx:if` / `wx:elif` / `wx:else` 这类条件模板，用来决定节点是否参与渲染。
+三元、逻辑与和函数体里的 `if` 分支会被转换成 `wx:if` / `wx:elif` / `wx:else` 这类条件模板，用来决定节点是否参与渲染。
 
 ```jsx
 {
@@ -128,20 +128,20 @@ Component({
 <view wx:else>B</view>
 ```
 
-这套“模板级”表达力有一个硬边界：模板能承载的主要是“数据 + 字符串模板”，不能像 JSX 那样用函数在运行时返回新的组件树。编译器也无法在运行时补出模板里没有声明过的结构。这一限制直接推动了 Taro 3 的架构重写。
+这套“模板级”表达力有一个硬边界：模板能承载的主要是“数据 + 字符串模板”，不能像 JSX 那样用函数在运行时返回新的组件树。编译器也无法在运行时补出模板里没有声明过的结构。这一限制直接推动了 Taro 3+ 的架构重写。
 
 ### 跨端构建机制
 
 前面以微信小程序为例讲了模板转换；放到跨端场景里，区别在于构建命令会先确定目标平台，后续生成阶段再选择对应的平台适配逻辑。
 
-```d2
+```d2 maxHeight=260
 direction: right
 
 source: JSX 源码
 core: AST 解析与转换
-weapp: weapp 代码生成
-h5: h5 代码生成
-rn: rn 代码生成
+weapp: weapp
+h5: h5
+rn: rn
 wa_out: 微信小程序产物
 h5_out: H5 产物
 rn_out: RN 产物
@@ -152,7 +152,7 @@ core -> h5 -> h5_out
 core -> rn -> rn_out
 ```
 
-不同平台适配逻辑会输出不同产物：weapp 生成 WXML/WXSS/JS/JSON，H5 生成 Web 产物，RN 生成面向 React Native 的 JS bundle 和组件调用。Taro 1/2 仍有公共运行时代码，用来承接 API 调用、生命周期和事件等能力。业务代码可以尽量保持同构，平台专有能力再通过条件编译或业务封装收口。
+不同平台适配逻辑会输出不同产物：`weapp` 生成 WXML/WXSS/JS/JSON，`h5` 生成 Web 产物，`rn` 生成面向 React Native 的 JS bundle 和组件调用。Taro 1/2 仍有公共运行时代码，用来承接 API 调用、生命周期和事件等能力。业务代码可以尽量保持同构，平台专有能力再通过条件编译或业务封装收口。
 
 ### Taro 1/2 的优势
 
@@ -175,7 +175,7 @@ Taro 1/2 的模板转换有一个天然边界：编译器必须提前看见组�
 
 ### 产物膨胀
 
-编译时模板转换会按组件结构生成平台产物，业务越复杂，生成代码越多，整体包体积也会随之增长；Taro 3 虽然增加了 runtime 成本，但业务 UI 结构主要由运行时维护，规模上来后体积优势会逐渐显现。
+编译时模板转换会按组件结构生成平台产物，业务越复杂，生成代码越多，整体包体积也会随之增长。Taro 3+ 虽然增加了 runtime 成本，但业务 UI 结构主要由运行时维护，规模上来后体积优势会逐渐显现。
 
 ### 跨端成本
 
@@ -184,9 +184,9 @@ Taro 1/2 的模板转换有一个天然边界：编译器必须提前看见组�
 - **能力不对齐，维护成本随平台数增长**：组件、样式、事件和宿主 API 在不同平台上不完全等价；每多一个目标平台，就要多维护一套映射规则和兼容边界；
 - **调试与生态割裂**：源码被拆成目标平台产物后，错误可能出现在 JS、模板或样式文件里，定位时需要在源码和生成文件之间来回映射。第三方组件库也需要满足各平台的组件和样式约束。
 
-## Taro 3 运行时架构
+## Taro 3+ 运行时架构
 
-Taro 3 不再在编译时把业务 UI 转成目标平台模板，而是在运行时把框架组件树同步到目标平台。运行链路可以拆成四段：框架层业务代码、renderer、`taro-runtime` 和目标平台适配。
+Taro 3+ 不再在编译时把业务 UI 转成目标平台模板，而是在运行时把框架组件树同步到目标平台。运行链路可以拆成四段：框架层业务代码、renderer、`taro-runtime` 和目标平台适配。
 
 ```d2
 direction: down
@@ -238,14 +238,14 @@ platform -> core: 平台生命周期与事件
 
 ### 编译时职责
 
-Taro 3 仍然保留编译阶段，但重点转向为运行时准备小程序侧静态产物，主要包括四类：
+Taro 3+ 仍然保留编译阶段，但重点转向为运行时准备小程序侧静态产物，主要包括四类：
 
 - **动态模板**：生成可复用的组件模板，提前声明节点类型、属性绑定和 `children` 递归位置；
 - **平台配置**：根据应用、页面、组件和插件配置生成 `app.json`、页面 `json`、组件引用等配置文件；
 - **平台入口**：生成应用、页面和组件入口，建立小程序文件与业务模块之间的引用关系；
 - **JS 产物**：打包业务代码、框架 renderer、`taro-runtime` 和小程序端适配代码。
 
-动态模板是这里最关键的差异。小程序模板仍然需要提前存在，所以 Taro 3 会生成一组通用模板，提前声明常见节点类型以及父子递归关系。运行时再把 Taro DOM 树序列化成数据，驱动这些模板渲染出真实视图。它和 Taro 1/2 的区别在于：模板不再对应具体业务组件结构，而是对应运行时可复用的节点描述。
+动态模板是这里最关键的差异。小程序模板仍然需要提前存在，所以 Taro 3+ 会生成一组通用模板，提前声明常见节点类型以及父子递归关系。运行时再把 Taro DOM 树序列化成数据，驱动这些模板渲染出真实视图。它和 Taro 1/2 的区别在于：模板不再对应具体业务组件结构，而是对应运行时可复用的节点描述。
 
 简化后可以理解成下面这种结构：
 
@@ -271,7 +271,7 @@ Taro 3 仍然保留编译阶段，但重点转向为运行时准备小程序侧�
 
 ### Taro DOM 抽象
 
-动态模板解决的是“小程序模板需要提前存在”的问题，Taro DOM 解决的是“框架 renderer 要操作什么”的问题。小程序逻辑层没有浏览器 DOM/BOM，Taro 运行时会提供一套精简版 DOM/BOM API，例如 `document`、`appendChild`、`insertBefore`、`removeChild`、`setAttribute` 等，并在 Webpack 构建下通过 ProvidePlugin 注入到逻辑层代码里。这样 renderer 可以像操作真实 DOM 一样提交更新，这些调用最终会修改内存中的 Taro DOM 树。
+动态模板解决的是“小程序模板需要提前存在”的问题，Taro DOM 解决的是“框架 renderer 要操作什么”的问题。小程序逻辑层没有浏览器 DOM/BOM，Taro 运行时会提供一套精简版 DOM/BOM API，例如 `document`、`appendChild`、`insertBefore`、`removeChild`、`setAttribute` 等，由构建工具注入到逻辑层代码里。这样 renderer 可以像操作真实 DOM 一样提交更新，最终落到 Taro DOM 树上。
 
 ```d2
 direction: right
@@ -365,142 +365,128 @@ root -> element: extends
 
 ### Reconciler 与组件挂载
 
-Taro 3 的关键不是把 React 的结果直接挂到浏览器 DOM，而是提供一套面向小程序端的 renderer。React 在这里可以理解为自定义宿主环境，commit 阶段把 vnode 变成对 Taro DOM API 的调用。
+在 Taro 3+ 里，React 可以理解为运行在一套自定义 renderer 上。React 仍然负责组件执行、状态调度、diff 和 commit；变化的是 commit 阶段的宿主操作：浏览器环境会提交成真实 DOM 操作，小程序环境会提交成 Taro DOM 操作。
+
+React renderer 不直接创建小程序原生视图，只修改内存中的 Taro DOM 树。后续由小程序端 runtime 把 Taro DOM 转成 `setData` 数据，交给动态模板渲染。
+
+以页面为例，编译产物会生成小程序 `Page` 配置，用来承接小程序生命周期并启动框架渲染。首次挂载时，Taro 会把框架渲染结果绑定到当前小程序页面实例，分发生命周期，并同步初始视图数据。简化后的关键链路如下：
 
 ```d2
 direction: right
 
-vdom: 框架 VDOM {
-  class: group
-
-  r_vnode: React vnode
+page: "Page onLoad"
+config: Taro 页面配置
+mount: "Current.app.mount()"
+render: React render
+commit: React commit
+root: 按页面路径获取 root
+load: 执行页面加载回调
+ctx: 关联 Page 实例
+update: "performUpdate(true)"
+data: 首次 setData
+template: 动态模板首次渲染 {
+  class: ok
 }
 
-reconcile: Taro Reconciler {
-  class: group
-
-  fiber: 调度器
-  diff: 差异计算
-  side: 副作用
-}
-
-taro_dom: Taro DOM 树
-
-vdom.r_vnode -> reconcile.fiber
-reconcile.fiber -> reconcile.diff
-reconcile.diff -> reconcile.side
-reconcile.side -> taro_dom
+page -> config: 触发
+config -> mount
+mount -> render
+render -> commit
+commit -> root: 写入 Taro DOM
+root -> load
+load -> ctx
+ctx -> update
+update -> data
+data -> template
 ```
 
-浏览器 React 把 vnode 变成 DOM 操作；Taro React 把 vnode 变成 Taro DOM 操作，再由小程序端 runtime 同步到小程序组件实例。差异点主要在 commit 阶段：
+小程序生命周期和 React effect 需要分开看。`onLoad`、`onShow`、`onReady` 等生命周期先进入 Taro runtime，再由 runtime 分发到 Taro 提供的页面生命周期入口；`useEffect` / `useLayoutEffect` 不对应某个小程序生命周期，它们只响应 React commit 后的状态和 props 变化。
 
-- 浏览器 React：`commit` 把 vnode 树变成 DOM API 调用，挂到 `document`；
-- Taro React：`commit` 把 vnode 树变成对 Taro DOM API 的调用，更新 Taro DOM 树，再由小程序端 runtime 同步到小程序组件实例。
+常见页面生命周期的映射关系如下，斜杠前是 Hooks 写法，斜杠后是类组件写法：
 
-**挂载**。页面被打开时，Taro runtime 创建一棵新的 Taro DOM 树，把根节点关联到小程序 Page/Component 实例。小程序 Page/Component 的生命周期（`onLoad`、`onShow`、`onReady`）由小程序端 runtime 桥接到框架的 effect / mount 钩子。
+| 小程序生命周期 | Taro 映射                         |
+| -------------- | --------------------------------- |
+| `onLoad`       | `useLoad` / `onLoad`              |
+| `onReady`      | `useReady` / `onReady`            |
+| `onShow`       | `useDidShow` / `componentDidShow` |
+| `onHide`       | `useDidHide` / `componentDidHide` |
+| `onUnload`     | `useUnload` / `onUnload`          |
 
-**更新**。组件状态变化触发框架调度，进入更新与 commit 流程，最终体现为 Taro DOM 树的变更。
+首次挂载之后，组件状态变化仍会回到框架调度和 commit 流程，最终表现为 Taro DOM 树的变更。至于这些变更如何通过批处理减少跨线程 `setData` 调用，下一节会展开这条链路。
 
-### setData 调度
+### 调度更新
 
-Taro 3 的 `setData` 不再是“业务显式调用”，而是由小程序端 runtime 在 patch 阶段根据 Taro DOM 变更生成数据补丁，再合批成小程序 `setData` 调用。
+框架 renderer 在 commit 阶段提交宿主操作，这些操作最终会落到 Taro DOM 方法上，并先修改逻辑层里的 Taro DOM Tree。小程序渲染层不能直接读取这棵内存树，所以 runtime 还需要把本轮更新整理成小程序 `data` 上的路径和值，例如 `{ "root.cn[0].cn[1].value": 1 }`，再通过 `setData` 发送给对应的 Page/Component 实例。这条更新链路可以简化成：
 
 ```d2
 direction: right
 
 state: 状态变更
-dom: 更新 Taro DOM
-diff: 节点 diff
-patch: 路径合批
-bridge: 小程序 setData
-view: 小程序渲染层
+commit: renderer commit
+method: Taro DOM 方法
+tree: 修改 Taro DOM Tree
+enqueue: "enqueueUpdate()"
+patch: 生成路径和值
+bridge: setData
+view: 渲染层更新
 
-state -> dom -> diff -> patch -> bridge -> view
+state -> commit -> method
+method -> tree
+method -> enqueue
+enqueue -> patch
+patch -> bridge -> view
 ```
 
-**合批**。一次更新可能涉及多个组件、多个字段。小程序端 runtime 会尽量把变更按目标组件分组，并减少跨线程 `setData` 调用次数。
+一次 commit 可能调用多个 Taro DOM 方法，影响多个节点和多个字段。runtime 会先收集同一轮更新里的记录，再按对应的 Page/Component 实例提交，避免每个字段变化都单独触发一次跨线程通信。
 
-**路径写法**。和原生小程序一样，Taro 也支持“只更新某路径”：Taro DOM 节点的 diff 输出“哪些路径变了”，小程序端 runtime 在调用 `setData` 时也使用路径写法。
-
-**业务不需要手写 `setData`**。这是 Taro 3 和 Taro 1/2、原生小程序之间很关键的差异：状态变更走框架调度，`setData` 由小程序端 runtime 触发。业务看到的“一次 `setData`”，可能由多次 state 变更合批而成。
+这里更新的粒度是 DOM 级别，只有最终发生变化的 DOM 节点会被同步到渲染层。相对于 Taro 1/2 的 data 级别更新，这种粒度更精准。
 
 ### 事件代理
 
-小程序事件回到 Taro 侧，要经过两段桥接。
+Taro 的事件代理同样围绕 Taro DOM 展开。它的目标是在小程序这类非浏览器环境里，提供一套接近 Web 的事件模型：节点通过 `addEventListener()` / `removeEventListener()` 管理监听器，事件对象统一成 `TaroEvent`，冒泡和阻止冒泡回到 Taro DOM 树上处理。
+
+在小程序端，编译生成的模板会把常见事件绑定到统一入口 `eventHandler`。事件触发后，runtime 根据事件携带的节点标识找到对应的 TaroElement，再把原始小程序事件整理成 `TaroEvent`，最后通过 `dispatchEvent()` 重新派发。
 
 ```d2
-direction: down
+direction: right
 
 user: 用户操作
-end_evt: 小程序事件
-end_rt: 小程序端 runtime
-taro_evt: Taro DOM 事件
-frm_evt: 框架事件系统
-handler: 业务回调
+template: 小程序模板事件
+entry: eventHandler
+node: 查找 TaroElement
+event: 创建 TaroEvent
+dispatch: "TaroElement.dispatchEvent"
+callback: 业务回调
 
-user -> end_evt -> end_rt -> taro_evt -> frm_evt -> handler
+user -> template
+template -> entry
+entry -> node
+entry -> event
+event -> dispatch
+node -> dispatch
+dispatch -> callback
 ```
 
-1. **小程序事件**：用户在 `view` 上点击，小程序 Page/Component 收到 `bindtap`。
-2. **小程序端 runtime 派发**：小程序端 runtime 根据事件 target 找到对应的 Taro DOM 节点，把事件对象整理为框架事件对象。
-3. **框架事件系统**：事件沿 Taro DOM 树冒泡，触发 React 事件回调。
+这条链路里有两层适配。第一层是事件对象适配：不同平台的原始事件字段不完全一致，runtime 会先整理成 Taro 能识别的 `TaroEvent`，同时保留原始小程序事件引用。第二层是派发语义适配：事件回到 Taro DOM 树后，监听器管理、冒泡控制和 `stopPropagation()` 等行为由 Taro DOM 事件系统处理。
 
-`catchtap`、`stopPropagation` 等“不冒泡”语义在小程序端 runtime 处生效。Taro 会尽量对齐 React 的事件回调模型，但小程序事件对象、冒泡链路和浏览器 DOM 事件并不完全等价。
+`TaroEvent` 只是尽量模拟 Web 标准事件，并不等同于浏览器原生 DOM 事件。比如捕获阶段不能按浏览器 DOM 的完整语义理解，特殊原生组件事件和平台特有字段也要以 runtime 的适配结果为准。
 
-### 跨端运行时抽象
+### Taro 3+ 的取舍
 
-```d2
-direction: down
+Taro 3+ 用运行时适配换来了更完整的框架表达力，同时也把一部分成本转移到了 runtime、包体积和更新调度上。
 
-core: taro-runtime {
-  class: group
+- **表达力更完整**：业务代码不再被编译时模板结构强约束，动态组件、条件结构和配置化 UI 更容易表达；高阶组件、render props、Context、ref 等能力也更接近原框架。代价是运行时链路变长，状态变化要经过框架调度、Taro DOM 更新和 `setData`。
+- **跨端维护更集中**：React、Vue 等技术栈通过各自 renderer 接入 Taro DOM，平台差异主要收敛到 runtime、事件系统、API 适配和 plugin-platform。差异不会消失，只是从业务模板转换转移到运行时适配和组件/API 边界里。
+- **调试更接近框架本身**：错误堆栈、SourceMap、断点更多落在 JS 上，定位问题时更接近 React / Vue 自身的开发体验。但性能问题也要看完整链路，包括框架渲染、Taro DOM 更新和小程序 `setData`。
+- **包体积曲线不同**：renderer、Taro DOM 和平台适配层会抬高初始包体积；但小程序端模板相对固定，WXML 体积有上限，不会随着业务组件结构持续膨胀。项目规模较小时 runtime 成本更明显，规模上来后固定模板的体积优势才会体现。
 
-  dom: Taro DOM
-  reconcile: Reconciler
-  event: 事件系统
-  api: 平台能力 API 接口
-}
+## Taro 3+ 工程实践
 
-end: 平台 runtime {
-  class: group
-
-  weapp: 微信小程序
-  h5: H5
-  rn: React Native
-}
-
-core.api -> end.weapp
-core.api -> end.h5
-core.api -> end.rn
-```
-
-`taro-runtime` 暴露给上层的是与平台无关的接口（DOM 操作、事件分发、API 调用）。平台 runtime 是适配层，把这些接口变成平台原生调用：
-
-- **DOM 操作**：Taro DOM 节点创建/更新/删除 → 平台组件实例创建/属性更新/销毁；
-- **事件**：平台事件 → Taro DOM 事件 → 框架事件；
-- **API**：`Taro.request` → 平台网络 API，例如 `wx.request` / `fetch` / RN 侧的 `fetch` 或 `XMLHttpRequest`。
-
-新增平台的工作主要落在平台 runtime 包与 plugin-platform 上，core 一般不用动。
-
-### Taro 3 的优势
-
-- **更完整地支持 React 惯用法**：高阶组件、render props、动态组件类型、Context、ref 等能力更接近原框架，Portal 这类能力仍要看具体平台和版本支持；
-- **跨端模型更统一**：各平台都围绕 Taro DOM 抽象工作，平台差异主要收敛到平台 runtime；
-- **调试体验更接近原框架**：错误堆栈、SourceMap、断点都更多落在 JS 上，接近 React 自身的开发体验。
-
-### Taro 3 的代价
-
-- **运行时有 renderer 和适配层**：调度开销比 Taro 1/2 大，包体积也更大；
-- **`setData` 由框架合批**：业务需要理解“什么时候会触发 `setData`”，写出“少变更、少引用变化”的代码；
-- **仍有小程序能力边界**：部分小程序原生能力需要运行时特殊处理才能用，比如同层渲染、`cover-view` 等。
-
-## Taro 3 工程实践
-
-理解运行时架构后，工程问题主要落在五处：包体积、`setData` 性能、跨端兼容、组件选型和调试诊断。
+理解运行时架构后，工程问题主要集中在项目结构、包体积、跨端兼容、组件选型、调试诊断和监控这几处。
 
 ### 项目结构与多平台组织
 
-Taro 3 的项目结构和普通 React 项目差异不大，平台差异主要落在配置和命令上。
+Taro 3+ 的项目结构和普通 React 项目差异不大，平台差异主要落在配置和命令上。
 
 ```text
 src/
@@ -529,7 +515,7 @@ taro build --type rn
 
 ### 包体积与分包
 
-Taro 3 默认产物比 Taro 1/2 大（runtime + 平台适配 + 业务代码）。优化路径有几条：
+Taro 3+ 默认产物比 Taro 1/2 大（runtime + 平台适配 + 业务代码）。优化路径有几条：
 
 - **按需引入平台 runtime**：不要让所有平台 runtime 进同一个包，平台配置决定进哪个平台 runtime；
 - **按需 polyfill**：避免 `core-js` 全量引入，按目标平台基础库版本选 polyfill 子集；
@@ -537,90 +523,44 @@ Taro 3 默认产物比 Taro 1/2 大（runtime + 平台适配 + 业务代码）�
 - **tree-shaking**：确保打包工具按 ES Module 摇树；
 - **图片/字体**：尽量用 CDN 引用，小程序端要受 `2MB` 主包限制。
 
-```d2
-direction: right
-
-src: 业务代码
-runtime: taro-runtime
-polyfill: polyfill
-adapter: 平台 runtime
-tree: tree-shaking
-sub: 分包
-
-src -> tree
-runtime -> tree
-polyfill -> tree
-adapter -> tree
-tree -> sub
-sub -> output
-output: 平台产物
-```
-
-### setData 与渲染性能
-
-包体积解决首屏加载成本，`setData` 解决运行时更新成本。Taro 3 的 `setData` 是**框架合批**的，业务不需要手写 `setData`，但需要理解“什么时候会触发 `setData`”：
-
-- 状态变更（`useState` / `data` 字段）；
-- props 变化（父组件重渲染）；
-- context 变化（订阅的 context 值变化）；
-- 强制更新（`forceUpdate`）。
-
-这里不再展开 `setData` 的路径写法、合并策略和行为约束，只看 Taro 3 额外带来的影响：组件树越深、引用变化越多、父组件重渲染越频繁，框架合批出的 `setData` 跨线程消息通常也越多。React 自身的渲染优化，例如 `memo` / `useCallback` / `useMemo` / 列表稳定 key / 长列表虚拟化，在 Taro 3 项目里同样必要。
-
 ### 跨端兼容
 
-平台能力差异是跨端框架必须正面回答的问题。Taro 3 提供三层抽象：
+平台能力差异不会因为使用跨端框架而消失。Taro 3+ 能统一组件写法、生命周期入口和常用 API，但宿主能力、组件行为和样式细节仍会有平台差异。工程里通常把兼容逻辑分成两类：JS / TS 里的编译期平台分支，以及样式里的条件编译。稳定后，再把这些差异收敛到业务封装中。
 
-```d2
-direction: down
-
-L1: 平台判断
-L2: 条件编译
-L3: 业务封装
-
-L1 -> L2
-L2 -> L3
-```
-
-**平台判断**。运行时拿当前平台信息：
+JS / TS 里的平台判断主要依赖 `process.env.TARO_ENV`。它表示当前编译平台类型，常见取值包括 `weapp`、`swan`、`alipay`、`h5`、`rn`、`tt`、`qq`、`jd`、`harmony`、`jdrn`。如果某段逻辑只应该出现在特定平台产物里，可以基于它写编译期分支：
 
 ```js
-import { getEnv, getSystemInfoSync } from '@tarojs/taro'
+/** 获取当前平台的接口前缀。 */
+function getApiBaseURL() {
+  if (process.env.TARO_ENV === 'h5') {
+    return '/api'
+  }
 
-const env = getEnv()
-console.log(env) // 'WEAPP' | 'H5' | 'RN' | ...
+  if (process.env.TARO_ENV === 'weapp') {
+    return 'https://api.example.com'
+  }
 
-const sys = getSystemInfoSync()
-console.log(sys.platform) // 'ios' / 'android' / ...
-```
-
-**条件编译**。配置层用 `defineConstants` 区分平台：
-
-```js
-// config/index.ts
-export default {
-  defineConstants: {
-    ENABLE_H5_ONLY_FEATURE: false,
-  },
+  return ''
 }
 ```
 
-代码层用注释指令：
+样式里的平台差异可以用注释指令处理。`#ifdef` 表示当前平台匹配时保留，`#ifndef` 表示当前平台匹配时剔除：
 
-```js
-/** 业务逻辑。 */
-function loadList() {
-  // #ifdef MP-WEIXIN
-  return Taro.request({ url: '/api/list' })
-  // #endif
-
-  // #ifdef H5
-  return fetch('/api/list').then((r) => r.json())
-  // #endif
+```css
+/* #ifdef weapp */
+.weapp-only-style {
+  color: red;
 }
+/* #endif */
+
+/* #ifndef h5 */
+.non-h5-style {
+  color: blue;
+}
+/* #endif */
 ```
 
-**业务封装**。把平台差异收口到 `adapter/`：
+这些分支不应该长期散落在页面和组件里。平台能力差异稳定后，JS / TS 逻辑应沉到 `adapter/`，样式差异则收口到平台样式文件、变量或组件样式封装中：
 
 ```text
 src/
@@ -630,33 +570,30 @@ src/
     share.ts
 ```
 
-业务代码只调用 `adapter/*`，平台差异集中在 adapter 内部。条件编译应该逐步收敛到 adapter，业务层不再直接写。
+业务代码只调用 `adapter/*`，平台差异集中在边界处展开。这样页面和组件仍然保持一套主要逻辑，跨端代码才不会被条件分支拆散。
 
 ### 组件选型
 
-- **Taro UI / NutUI**：覆盖较全的跨端组件库，按目标平台选对应的包；
-- **自研组件**：跨端组件需要“平台无关”，不直接依赖小程序 API，数据通过 props / 事件传递；
-- **第三方 React 组件库**：有机会复用，但样式和事件可能需要适配 Taro 的属性命名，例如 `onClick` 而不是 `bindtap`，CSS 单位也要注意 `rpx`。
+组件选型优先看目标平台覆盖范围。如果需求能被 Taro UI、NutUI 这类跨端组件库满足，通常优先使用对应平台版本，成本最低。
 
-选型原则：能用跨端组件库就用；不能用再自研；自研组件保持“平台无关”，避免在业务组件内直接依赖小程序 API。
+跨端组件库覆盖不到时，再考虑自研组件。自研组件要尽量保持平台无关，数据通过 props 传入，交互通过事件抛出，不在组件内部直接依赖小程序 API。确实需要平台能力时，也应通过 adapter 收口。
+
+第三方 React 组件库可以评估复用，但不能默认可用。很多 Web 组件依赖浏览器 DOM、CSS 选择器能力或 Web 事件模型，放到 Taro 小程序端可能需要改造；即使能复用，也要注意事件命名、样式单位和目标平台支持情况。
 
 ### 调试与诊断
 
-Taro 3 的调试体验比 Taro 1/2 接近原 React：
+Taro 3+ 的业务逻辑主要运行在 JS 里，错误堆栈、SourceMap 和断点调试会更接近 React / Vue 自身的开发体验。构建时应开启合适的 SourceMap，例如 `devtool: 'source-map'`，让错误堆栈能映射回源码。
 
-- **编译产物可读**：错误堆栈更多指向 JS 文件，而不是 wxml 行号；
-- **SourceMap**：构建时开启 `devtool: 'source-map'`，错误堆栈能映射回 JSX 源文件；
-- **平台开发者工具**：H5 用浏览器 devtools，weapp 用微信开发者工具，RN 用 Flipper + Metro；
-- **Trace**：复杂性能问题借平台开发者工具的 Trace 看渲染、`setData`、事件链路。
+平台开发者工具仍然不能省。Web 主要看浏览器 DevTools，小程序端看微信开发者工具，RN 看对应的 Metro / Flipper 链路。遇到复杂性能问题时，重点看框架渲染、Taro DOM 更新、`setData` 和事件链路之间的耗时关系。
 
-常见性能问题排查路径：
+常见页面卡顿可以按下面的路径排查：
 
 ```d2
 direction: down
 
 start: 页面卡顿
 trace: wx devtools Trace：看 setData 频率
-tree: 看组件树：是否过度细分组件
+tree: 看渲染范围：是否过度重渲染
 props: 看 props 引用：是否大量 inline 对象
 list: 看长列表：是否未用 recycle-view
 api: 看跨端 API：是否有平台差异未处理
@@ -666,134 +603,48 @@ start -> trace -> tree -> props -> list -> api
 
 ### 监控
 
-Taro 3 项目里，监控可以分为三段：
-
-```d2
-direction: right
-
-err: 错误监控
-perf: 性能监控
-biz: 业务自打点
-
-err -> perf
-perf -> biz
-```
-
-**错误监控**。小程序原生错误入口（`App.onError`、`wx.onError`、Promise 拒绝）由小程序端 runtime 桥接给业务，业务可以注册全局 handler：
+Taro 3+ 项目里的监控通常覆盖三类信号：运行错误、性能指标和业务事件。错误监控优先接应用级生命周期，例如 `onError`、`onUnhandledRejection`，再按平台补充原生错误入口：
 
 ```js
-import { getApp } from '@tarojs/taro'
+import { Component } from 'react'
 
-/** 捕获全局错误并上报。 */
-function setupErrorReport() {
-  const app = getApp()
-  // 小程序端 runtime 会把 wx.onError 转发到这里
-  app.onError = (err) => {
+class App extends Component {
+  /** 捕获应用级错误并上报。 */
+  onError(err) {
     reportError(err)
+  }
+
+  /** 捕获未处理的 Promise 拒绝并上报。 */
+  onUnhandledRejection(res) {
+    reportError(res.reason)
   }
 }
 ```
 
-**性能监控**。关键页面进入、关键 API 耗时、关键 setData 触发由业务自打点。Taro 提供的性能 API 在不同平台覆盖度不同，业务封装层统一。
+性能监控重点看关键页面进入耗时、接口耗时、长任务、渲染卡顿和 `setData` 相关指标。不同平台能拿到的性能数据不完全一致，建议在业务封装层统一字段和采样规则。
 
-**业务自打点**。重要交互（点击、提交、页面切换）打点上报，采样率按用户/页面区分。
-
-监控上报本身不要影响主流程。异步、批量、采样、离线缓存这几条原则，在 Taro 项目里同样适用。
+业务自打点用于补齐技术指标看不到的链路，例如点击、提交、支付、分享和页面切换。监控上报本身不要影响主流程，异步、批处理、采样和离线缓存这几条原则，在 Taro 项目里同样适用。
 
 ## 跨端方案对比
 
 对比跨端方案时，先看两个问题：框架层主要放在编译时还是运行时，以及 DSL 给业务保留多少自由度。下面的比较以小程序场景为主，具体选型仍要回到目标平台、版本和团队技术栈。
 
-### 架构总览
+| 维度       | Taro 3+                                      | uni-app                        |
+| ---------- | -------------------------------------------- | ------------------------------ |
+| 架构       | 运行时适配                                   | 编译时模板（增强）+ 轻量运行时 |
+| DSL        | React / Vue / Solid 等                       | Vue 为主                       |
+| 平台覆盖   | 微信小程序 / Web / RN / Harmony / 多家小程序 | App / Web / 各类小程序         |
+| 运行时开销 | 中（reconciler + 平台 runtime）              | 中低                           |
+| 表达力     | 较完整                                       | 中等（受模板编译能力限制）     |
+| 包体积     | 初始较大，规模上来后看模板复用收益           | 中                             |
+| 生态       | 主流、组件库完善                             | 工具链完善、社区大             |
 
-```d2
-direction: down
+uni-app 主体是编译时模板转换：Vue 模板先编译为 uni-app 的中间表示，再由各平台编译器转成平台原生代码。它的性能和包体积相对可控，工具链、插件市场和社区生态也比较完整；代价是复杂动态结构仍会受模板编译边界影响。
 
-taro12: Taro 1/2 {
-  class: group
-
-  dsl_a: JSX
-  compile_a: 编译时模板转换
-  end_a: 平台模板产物
-}
-
-taro3: Taro 3 {
-  class: group
-
-  dsl_b: JSX
-  compile_b: 平台能力注入
-  runtime_b: Taro 运行时
-  end_b: 平台组件实例
-}
-
-uni: uni-app {
-  class: group
-
-  dsl_c: Vue 为主
-  compile_c: 编译时模板转换（增强）
-  runtime_c: 轻量 Vue 适配
-  end_c: 平台模板产物
-}
-
-remax: Remax {
-  class: group
-
-  dsl_d: React
-  compile_d: 平台能力注入
-  runtime_d: 运行时适配
-  end_d: 平台组件实例
-}
-
-taro12.compile_a -> taro12.end_a
-taro3.compile_b -> taro3.runtime_b -> taro3.end_b
-uni.compile_c -> uni.runtime_c -> uni.end_c
-remax.compile_d -> remax.runtime_d -> remax.end_d
-```
-
-### 对比矩阵
-
-| 维度       | Taro 1/2                     | Taro 3                                 | uni-app                        | Remax                  |
-| ---------- | ---------------------------- | -------------------------------------- | ------------------------------ | ---------------------- |
-| 架构       | 编译时模板                   | 运行时适配                             | 编译时模板（增强）+ 轻量运行时 | 运行时适配             |
-| DSL        | React                        | React                                  | Vue 为主                       | React                  |
-| 平台覆盖   | weapp / h5 / rn / 多家小程序 | weapp / h5 / rn / harmony / 多家小程序 | weapp / h5 / 各类小程序        | weapp / h5 / alipay 等 |
-| 运行时开销 | 低                           | 中（reconciler + 平台 runtime）        | 中低                           | 中                     |
-| 表达力     | 受限                         | 较完整                                 | 中等（受模板编译能力限制）     | 较完整                 |
-| 包体积     | 小                           | 较大                                   | 中                             | 较大                   |
-| 生态       | 历史项目多                   | 主流、组件库完善                       | 工具链完善、社区大             | 维护节奏放缓           |
-
-### uni-app 的方案
-
-uni-app 主体是**编译时模板转换**，但 Vue 编译器在小程序端做了特殊化：先把 Vue 模板编译为 uni-app 的中间表示，再由各平台编译器转成对应平台原生代码。运行时是一层轻量 Vue 适配，把组件实例和小程序 Page/Component 桥接。
-
-- **优势**：性能接近原生、包体积可控、HBuilderX 工具链完善、社区活跃；
-- **局限**：Vue 表达力受模板编译能力限制，动态能力弱于 Taro 3 / Remax；非 Vue 生态需要额外桥接。
-
-### Remax 的方案
-
-Remax 跟 Taro 3 思路接近，用 React + 运行时适配，更强调“用 React 写小程序”。运行时没有业务小程序模板产物，组件树直接映射到小程序组件实例。
-
-- **优势**：React 表达力完整、API 简洁、对 React 开发者友好；设计方向与 Taro 3 接近；
-- **局限**：平台覆盖较少；官方维护节奏在 2022 年后放缓，新项目采用前需要评估现状。
-
-### 选型框架
-
-不同业务有不同取舍，下面给一段经验性判断：
-
-- **新项目、跨多平台、复杂业务** → Taro 3：平台覆盖面较广、生态成熟，适合作为优先评估项；
-- **新项目、Vue 为主、性能敏感** → uni-app：Vue 生态成熟、性能表现好、HBuilderX 提效明显；
-- **新项目、React 为主、追求极简** → Remax：API 干净、学习成本低，但要确认平台覆盖和社区维护现状；
-- **Taro 1/2 历史项目** → 视既有栈而定；老项目一般保留或迁到 Taro 3。
-
-Remax 当前更适合学习其设计思路，而不是新项目首选。
+新项目如果跨多平台、业务结构复杂，Taro 3+ 通常适合作为优先评估项；如果团队已经采用 uni-app / DCloud 生态，并且更看重工具链、插件市场和小程序端稳定性，uni-app 通常更容易落地。
 
 ## 总结
 
-跨端框架在小程序端的核心问题，是“DSL → 运行平台”中间那一层怎么搭。Taro 1/2 选了“编译时模板转换”，Taro 3 / Remax 选了“运行时适配”，uni-app 在两者之间偏前者。不同选择的具体取舍：
+Taro 3+ 的核心变化，是从“把业务组件编译成平台模板”转向“让框架更新在运行时落到 Taro DOM，再由平台 runtime 同步到宿主环境”。动态模板、调度更新和事件代理，都是围绕这条链路展开的。
 
-- **选 Taro 1/2**：选的是“性能 + 包小 + 表达力受限”，适合轻量业务或历史项目维护；
-- **选 Taro 3**：选的是“更完整的 React 表达力 + 跨端 + 包稍大”，适合跨端需求复杂的新项目；
-- **选 uni-app**：选的是“Vue + 性能 + 生态完整”，适合 Vue 为主、追求工程效率的团队；
-- **选 Remax**：选的是“React 优先 + 极简设计”，但要确认平台覆盖和社区维护现状。
-
-把架构看明白，原理与实践之间的取舍才有依据。先理解小程序运行时，再看跨端框架如何适配它，Taro 的很多设计就会顺起来。
+这套架构换来了更完整的框架表达力和更集中的跨端适配，也带来了 runtime 成本、包体积和更新链路复杂度。工程上要做的，是分清差异出现在哪一层：组件表达在框架层，视图更新在 Taro DOM 和平台 runtime，平台能力则尽量收口到 adapter。

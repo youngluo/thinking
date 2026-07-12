@@ -44,6 +44,7 @@ const SIDEBAR_GROUP_ORDERS: Record<string, string[]> = {
     '构建工具',
     'React',
     'Vue',
+    'BFF',
     '性能优化与监控',
   ],
   [AI_PATH]: ['Agent'],
