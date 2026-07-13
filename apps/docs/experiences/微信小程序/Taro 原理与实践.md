@@ -5,9 +5,9 @@ draft: true
 
 # Taro 原理与实践
 
-跨端框架在小程序端要解决的问题，不是把 Web 页面搬进小程序，而是让同一份 React 或 Vue 代码跑在多种非浏览器运行时上。每种运行时都有自己的组件模型、样式系统、宿主 API 和线程模型。框架真正要做的，是把上层 DSL 转成运行时能识别的组件、样式和 API 调用。
+当前的跨端框架，基本思路都是希望用 React、Vue 这类主流框架来写业务层代码。到了小程序端，这些代码最终要对应到小程序能识别的产物和调用。解题思路其实也很常见，要么在编译阶段提前转成目标平台产物，要么在运行时提供一层适配，把上层框架的渲染结果接到小程序运行环境里。
 
-围绕这件事，Taro 前后采用过两种架构：Taro 1/2 以**编译时模板转换**为核心，Taro 3+ 转向**运行时适配**。沿着这条演进线看，Taro 为什么换架构、运行时做了什么、工程里该怎么取舍，都会更清楚。
+Taro 的架构变化，也是在这两种思路之间演进。Taro 1/2 主要靠**编译时模板转换**，Taro 3+ 则把更多能力放到了**运行时适配**里。下面就按这条演进线展开。
 
 > 本文假设你已了解小程序运行机制。相关内容见[《微信小程序原理与实践》](./原理与实践.md)。
 
@@ -15,83 +15,63 @@ draft: true
 
 Taro 1/2 的核心思路，是在编译时分析 JSX，把组件结构提前转换成小程序能识别的 WXML/WXSS/JS。运行时不需要维护虚拟 DOM，React 写法和小程序产物之间的差异主要在构建阶段被消化掉。
 
-```d2
-direction: right
-
-source: 业务代码 {
-  class: group
-
-  input: JSX / 小程序 API 调用
-}
-
-compile: 编译时 {
-  class: group
-
-  parse: 解析
-  ast: AST
-  transform: 转换
-  emit: 生成小程序产物
-
-  parse -> ast -> transform -> emit
-}
-
-target: 小程序端 {
-  class: group
-
-  files: WXML / WXSS / JS / JSON
-}
-
-source.input -> compile.parse: 输入
-compile.emit -> target.files: 生成
-```
-
-### 编译流水线
+### 编译时职责
 
 入口拿到 JSX 后，编译阶段可以拆成四个职责：
 
 - **解析**：Babel 把源代码解析成 AST；
 - **转换**：遍历 AST，把 `<View>`、`<Text>`、`<Image>` 等 Taro 组件映射到小程序内置组件；把 `className`、`onClick`、`style` 等 JSX 属性翻译成模板属性、事件绑定和数据字段；
-- **模板生成**：根据转换后的 AST 生成 `wxml` 和 `wxss`。页面入口生成页面模板，作为自定义组件输出的组件生成组件模板；
-- **逻辑收口**：页面逻辑注册到 `Page({ ... })`，组件逻辑注册到 `Component({ ... })`，生命周期和状态更新接入小程序的页面或组件模型。
+- **模板生成**：根据转换后的 AST 生成 `wxml` 和 `wxss`；页面入口生成页面模板，作为自定义组件输出的组件生成组件模板；
+- **逻辑收口**：页面逻辑注册到 `Page({ ... })`，组件逻辑注册到 `Component({ ... })`，生命周期和状态更新接入小程序的页面或组件配置。
 
-业务写 React 组件，构建产物是小程序页面、组件、模板和样式文件；运行时不走 React 的渲染流程，而是执行 `Page` / `Component` 实例和数据绑定。
+业务层写 React 组件，构建产物是小程序页面、组件、模板和样式文件；运行时不走 React 的渲染流程，而是执行 `Page` / `Component` 实例和数据绑定。
 
-### 组件映射与属性编译
+### 组件映射
 
-框架组件到小程序组件的映射，是 Taro 1/2 最基础的一层抽象。
+React 组件到小程序组件的映射，是 Taro 1/2 最基础的一层抽象。
 
 ```jsx
-<View className={cls} onClick={handleTap}>
-  <Text>{title}</Text>
-  <Image src={url} mode="aspectFill" />
+<View className="box" onClick={handleTap}>
+  <Input value={value} onInput={handleInput} />
+  <Picker mode="selector" range={options} onChange={handleChange}>
+    <Text>{selectedLabel}</Text>
+  </Picker>
 </View>
 ```
 
 编译后大致变成：
 
 ```xml
-<view class="{{cls}}" bindtap="handleTap">
-  <text>{{title}}</text>
-  <image src="{{url}}" mode="aspectFill"></image>
+<view class="box" bindtap="handleTap">
+  <input value="{{value}}" bindinput="handleInput"></input>
+  <picker mode="selector" range="{{options}}" bindchange="handleChange">
+    <text>{{selectedLabel}}</text>
+  </picker>
 </view>
 ```
 
 `className` 会编译成小程序模板的 `class`，`onClick` 会编译成 `bindtap`，子组件和属性同样按小程序模板语法生成。其中：
 
-- 静态部分直接写进模板字符串，`<view class="box">` 这类字面量在编译时就能定下来；
+- 静态部分直接写进模板字符串，`<picker mode="selector">` 这类字面量在编译时就能定下来；
 - 动态部分通过 `{{}}` 绑定模板数据，对应字段被加到 `data` 上；
-- 事件回调按模板事件名挂载。`onClick` 编译成 `bindtap`，`onInput` 编译成 `bindinput`，`onChange` 编译成 `bindchange`；页面模板里的 `bindtap="handleTap"` 会调用 `Page({ handleTap() {} })` 上的同名函数，组件模板里的同名事件会调用 `Component({ methods: { handleTap() {} } })` 中的方法。`catch*` 前缀的事件不冒泡，相当于 `stopPropagation`。
+- 事件回调按模板事件名挂载。页面模板里的 `bindtap="handleTap"` 会调用 `Page({ handleTap() {} })` 上的同名函数，组件模板里的同名事件会调用 `Component({ methods: { handleTap() {} } })` 中的方法。
 
-```js
+```js fold
 Component({
   data: {
-    cls: 'box',
-    title: 'Hello',
-    url: 'https://example.com/x.png',
+    value: '',
+    options: ['A', 'B'],
+    selectedLabel: 'A',
   },
   methods: {
     handleTap() {
       // 业务处理
+    },
+    handleInput(event) {
+      // 输入处理
+    },
+    handleChange(event) {
+      // 选择处理
     },
   },
 })
@@ -102,11 +82,7 @@ Component({
 数组渲染通过 `wx:for` 实现，列表项用 `wx:key` 标识。源代码里的 `list.map(...)` 会在小程序模板中生成 `wx:for`，列表数据则通过页面或组件的 `data` 提供。
 
 ```jsx
-<View>
-  {list.map((item) => (
-    <View key={item.id}>{item.name}</View>
-  ))}
-</View>
+list.map((item) => <View key={item.id}>{item.name}</View>)
 ```
 
 ```xml
@@ -118,9 +94,7 @@ Component({
 三元、逻辑与和函数体里的 `if` 分支会被转换成 `wx:if` / `wx:elif` / `wx:else` 这类条件模板，用来决定节点是否参与渲染。
 
 ```jsx
-{
-  show ? <View>A</View> : <View>B</View>
-}
+show ? <View>A</View> : <View>B</View>
 ```
 
 ```xml
@@ -128,11 +102,11 @@ Component({
 <view wx:else>B</view>
 ```
 
-这套“模板级”表达力有一个硬边界：模板能承载的主要是“数据 + 字符串模板”，不能像 JSX 那样用函数在运行时返回新的组件树。编译器也无法在运行时补出模板里没有声明过的结构。这一限制直接推动了 Taro 3+ 的架构重写。
+这也是编译时方案的主要限制，模板只能表达“预先确定的结构 + 数据”，不能像 JSX 那样在运行时灵活的返回组件树。模板里没有声明过的结构，编译器也无法在运行时补全。要想支持更完整的 React 写法，就需要把更多渲染能力放到运行时。
 
 ### 跨端构建机制
 
-前面以微信小程序为例讲了模板转换；放到跨端场景里，区别在于构建命令会先确定目标平台，后续生成阶段再选择对应的平台适配逻辑。
+多平台构建时，构建命令会先确定目标平台，然后进入对应的编译和生成链路。上层业务代码尽量保持同一套写法，平台差异则在构建阶段展开，由不同平台的适配逻辑生成各自能运行的产物。
 
 ```d2 maxHeight=260
 direction: right
@@ -152,37 +126,32 @@ core -> h5 -> h5_out
 core -> rn -> rn_out
 ```
 
-不同平台适配逻辑会输出不同产物：`weapp` 生成 WXML/WXSS/JS/JSON，`h5` 生成 Web 产物，`rn` 生成面向 React Native 的 JS bundle 和组件调用。Taro 1/2 仍有公共运行时代码，用来承接 API 调用、生命周期和事件等能力。业务代码可以尽量保持同构，平台专有能力再通过条件编译或业务封装收口。
+不同平台最终拿到的产物并不一样。`weapp` 会生成 WXML/WXSS/JS/JSON，`h5` 会生成 Web 产物，`rn` 则生成面向 React Native 的 JS bundle 和组件调用。Taro 1/2 的核心是编译时转换，但并不意味着完全没有运行时，API 调用、生命周期、事件等能力仍然需要公共运行时代码承接。
+
+这种方案适合页面结构相对稳定的场景。组件结构提前生成后，小程序端可以直接接入模板和数据绑定机制，运行时只需要处理数据更新、事件和平台 API 等能力。
 
 ### Taro 1/2 的优势
 
-- **运行时链路短**：UI 结构已在编译时生成平台产物，运行时主要处理 API、生命周期和事件桥接；
+- **运行时链路短**：UI 结构已在编译时生成目标产物，运行时主要处理 API、生命周期和事件桥接；
 - **贴近原生模型**：小程序端产物以 WXML/WXSS/JS/JSON 为主，直接接入平台的模板和数据绑定机制；
 - **更新成本可控**：模板结构提前确定，运行时主要更新数据字段，`setData` 路径更容易和模板绑定对应。
 
-这套架构的优势来自编译时转换；同样，限制也来源于此。
+这些优势都是建立在“结构提前确定”的前提上。当业务表达变的更动态，或者目标平台继续增加时，编译时方案需要维护的映射和约束也会变多。
 
 ## 为什么换架构
 
-随着工程规模扩大，Taro 1/2 的编译时架构会逐渐暴露三类问题：模板表达力受限、构建产物膨胀，以及跨端维护成本上升。
+随着工程规模扩大，Taro 1/2 的编译时架构会遇到三类问题：模板表达力受限、构建产物膨胀，以及跨端维护成本上升。
 
-### 表达力受限
+表达力的问题来自模板生成方式。Taro 1/2 要求编译器提前看见组件结构，才能生成目标平台模板。已知节点的显隐和重复可以交给 `wx:if`、`wx:for` 处理，但组件类型或嵌套关系如果要到运行时才确定，模板就很难像 JSX 一样表达动态组件树。动态表单、权限化 UI、插件化页面都属于这类场景。
 
-Taro 1/2 的模板转换有一个天然边界：编译器必须提前看见组件结构，才能生成目标平台模板。已知节点的显隐和重复可以交给 `wx:if`、`wx:for` 这类模板指令处理；但如果组件类型、嵌套层级或结构形状要到运行时才确定，模板就很难像 JSX 一样自由表达组件树。具体有两类问题：
+产物体积也会受到影响。编译时模板转换会按组件结构生成平台产物，业务越复杂，生成代码越多。Taro 3+ 虽然增加了 runtime 成本，但 UI 结构主要由运行时描述和更新，项目规模上来后，模板产物不再随页面复杂度线性膨胀。
 
-- **语法表达受限**：上层 DSL 最终要转换成目标平台模板，不能跳出平台模板的表达范围；如果组件结构要到运行时才确定，编译器就很难提前生成完整模板；
-- **运行时结构受限**：动态表单、权限化 UI、插件化页面往往由配置决定组件类型和嵌套关系；而 Taro 1/2 需要提前在模板里声明可能出现的结构，后续调整空间有限。
-
-### 产物膨胀
-
-编译时模板转换会按组件结构生成平台产物，业务越复杂，生成代码越多，整体包体积也会随之增长。Taro 3+ 虽然增加了 runtime 成本，但业务 UI 结构主要由运行时维护，规模上来后体积优势会逐渐显现。
-
-### 跨端成本
-
-跨端代码能保持一套写法，但平台差异不会消失，只是转移到编译器、平台适配层和业务约束里。成本主要体现在两方面：
+跨端维护成本则来自平台差异。这些差异最终会转移到编译器、平台适配层和业务约束里：
 
 - **能力不对齐，维护成本随平台数增长**：组件、样式、事件和宿主 API 在不同平台上不完全等价；每多一个目标平台，就要多维护一套映射规则和兼容边界；
 - **调试与生态割裂**：源码被拆成目标平台产物后，错误可能出现在 JS、模板或样式文件里，定位时需要在源码和生成文件之间来回映射。第三方组件库也需要满足各平台的组件和样式约束。
+
+这些问题靠增强编译器很难解决，因此 Taro 3+ 把更多能力移到了运行时。
 
 ## Taro 3+ 运行时架构
 
@@ -214,7 +183,7 @@ core: taro-runtime {
   b: 页面 / 组件配置创建
   c: 生命周期桥接
   event: 事件系统
-  schedule: Hydrate 序列化
+  schedule: 调度更新
 }
 
 platform: 平台渲染器 {
