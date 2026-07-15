@@ -5,22 +5,9 @@ order: 3
 
 # Vite
 
-Vite 的核心不是“换了一个更快的打包器”，而是把开发阶段和生产阶段拆成了两套不同的策略。
+Vite 的核心是把开发阶段和生产阶段拆成两套策略。开发阶段尽量不提前打包业务代码，把源码按浏览器原生 ESM 方式直接交给浏览器加载；生产阶段才走完整构建流水线，做 Tree Shaking、代码分块和资源优化。
 
-开发阶段，Vite 尽量不提前打包业务代码，而是把源码按浏览器原生 ESM 的方式直接交给浏览器加载。生产阶段，Vite 再把整个应用交给构建流水线，生成适合部署的静态资源。
-
-整体可以理解成这条主线：
-
-`启动 dev server -> 解析配置 -> 预构建依赖 -> 按需转换源码 -> 浏览器原生 ESM 加载 -> 文件变化 -> HMR 精准更新`
-
-- `dev server`：开发时的 HTTP 服务，负责返回 HTML、模块、资源和 HMR 客户端。
-- `native ESM`：浏览器直接按 `import` 请求模块，Vite 不需要先把业务代码整体打成一个 bundle。
-- `依赖预构建`：把第三方依赖整理成浏览器更容易加载的 ESM 文件，并做缓存。
-- `transform`：对 TS、JSX、CSS、Vue SFC 等源码做按需转换。
-- `HMR`：文件变更后，只更新受影响的模块，尽量保留页面状态。
-- `build`：生产构建时重新走完整打包、分块、压缩和资源处理。
-
-我的理解是：Vite 快，不是因为所有环节都“瞬间完成”，而是因为它把开发时最贵的“全量打包”推迟了。启动时只做必须做的事，真正访问到某个源码模块时才转换它；文件变化时也只处理受影响的模块。
+整体可以理解成这条主线：`启动 dev server -> 解析配置 -> 预构建依赖 -> 按需转换源码 -> 浏览器原生 ESM 加载 -> 文件变化 -> HMR 精准更新`
 
 ## 开发流程
 
@@ -28,49 +15,33 @@ Vite 开发模式的核心，是让浏览器参与模块图加载。传统打包
 
 大致流程如下：
 
-```mermaid
-%%{init: {'themeVariables': {'lineColor': '#7fa3ff'}}}%%
-flowchart TB
-    A[执行 vite dev]
-    B[加载配置和插件]
-    C[创建 dev server]
-    D[扫描入口依赖]
-    E[依赖预构建]
-    F[返回 index.html]
-    G[浏览器解析 ESM import]
-    H[请求源码模块]
+```d2
+direction: down
 
-    subgraph SERVER[Vite Dev Server]
-        direction TB
-        I[resolveId<br>解析模块路径]
-        J[load<br>读取模块内容]
-        K[transform<br>按需转换源码]
-        L[返回浏览器可执行模块]
-    end
+A: 执行 vite dev
+B: 加载配置和插件
+C: 创建 dev server
+D: 扫描入口依赖
+E: 依赖预构建
+F: 返回 index.html
+G: 浏览器解析 ESM import
+H: 请求源码模块
 
-    M[浏览器继续请求子模块]
-    N[建立模块图]
-    O[页面运行]
+server: Vite Dev Server {
+  class: group
 
-    A --> B --> C --> D --> E --> F --> G --> H --> I --> J --> K --> L --> M --> N --> O
-    M --> H
+  I: resolveId（解析模块路径）
+  J: load（读取模块内容）
+  K: transform（按需转换源码）
+  L: 返回浏览器可执行模块
+}
 
-    style SERVER fill:#fffaf0,stroke:#ffa500,stroke-width:2px,stroke-dasharray:5,5,rx:4,ry:4
-    style A fill:#7fa3ff29,stroke:#07f,stroke-width:1px,rx:4,ry:4
-    style B fill:#bbdefb,stroke:#0d47a1,stroke-width:1px,rx:4,ry:4
-    style C fill:#c8e6c9,stroke:#1b5e20,stroke-width:1px,rx:4,ry:4
-    style D fill:#ffe0b2,stroke:#bf360c,stroke-width:1px,rx:4,ry:4
-    style E fill:#c8e6c9,stroke:#1b5e20,stroke-width:1px,rx:4,ry:4
-    style F fill:#7fa3ff29,stroke:#07f,stroke-width:1px,rx:4,ry:4
-    style G fill:#bbdefb,stroke:#0d47a1,stroke-width:1px,rx:4,ry:4
-    style H fill:#ffe0b2,stroke:#bf360c,stroke-width:1px,rx:4,ry:4
-    style I fill:#e1bee7,stroke:#4a148c,stroke-width:1px,rx:4,ry:4
-    style J fill:#bbdefb,stroke:#0d47a1,stroke-width:1px,rx:4,ry:4
-    style K fill:#ffe0b2,stroke:#bf360c,stroke-width:1px,rx:4,ry:4
-    style L fill:#c8e6c9,stroke:#1b5e20,stroke-width:1px,rx:4,ry:4
-    style M fill:#7fa3ff29,stroke:#07f,stroke-width:1px,rx:4,ry:4
-    style N fill:#c8e6c9,stroke:#1b5e20,stroke-width:1px,rx:4,ry:4
-    style O fill:#7fa3ff29,stroke:#07f,stroke-width:1px,rx:4,ry:4
+M: 浏览器继续请求子模块
+N: 建立模块图
+O: 页面运行
+
+A -> B -> C -> D -> E -> F -> G -> H -> server.I -> server.J -> server.K -> server.L -> M -> N -> O
+M -> H
 ```
 
 这条链路可以拆成几个关键步骤。
@@ -108,7 +79,7 @@ Vite 的依赖预构建主要解决两个问题。
 
 第一个问题是兼容性。很多 npm 包仍然可能以 CommonJS、UMD 或复杂入口形式发布，不能直接作为浏览器 ESM 使用。Vite 会把这些依赖转换成 ESM。
 
-第二个问题是请求数量。有些依赖内部会拆成大量小模块，如果浏览器按原样逐个请求，开发服务器启动虽然快，但页面首次加载会被大量网络请求拖慢。预构建会把这类依赖整理成更少、更稳定的文件。
+第二个问题是请求数量。有些依赖内部会拆成大量小模块，浏览器按原样逐个请求会让页面首屏变慢。预构建会把这类依赖整理成更少、更稳定的文件。
 
 简化逻辑如下：
 
@@ -125,8 +96,6 @@ Vite 的依赖预构建主要解决两个问题。
 
 - 依赖通常变化少，适合预构建和强缓存。
 - 源码变化频繁，适合按需转换和 HMR。
-
-这就是 Vite 开发性能的一个关键分层：稳定的第三方依赖先整理好，活跃的业务代码按需处理。
 
 ### 3. 按需转换源码
 
@@ -149,7 +118,7 @@ Vite 会在服务端完成几件事：
   -> 返回浏览器可执行的 ESM
 ```
 
-这也是为什么 Vite 的开发模式更像“模块服务”，而不是“提前打包”。每个源码文件在开发时仍然以模块为单位存在，浏览器天然知道自己还需要请求哪些子模块。
+每个源码文件在开发时仍然以模块为单位存在，浏览器天然知道自己还需要请求哪些子模块。这就是 Vite 的开发模式更像“模块服务”而不是“提前打包”的原因。
 
 不过按需转换不等于每次都重新转换。Vite 会结合文件时间戳、缓存、HTTP 协商和依赖缓存，尽量避免重复工作。
 
@@ -169,7 +138,7 @@ ModuleNode {
 }
 ```
 
-这份模块图的价值不只在加载阶段，更重要的是服务 HMR。
+模块图在加载阶段帮浏览器建立依赖视图，HMR 阶段要靠它定位边界。
 
 当某个文件变化时，Vite 需要知道：
 
@@ -187,38 +156,29 @@ HMR 解决的是开发阶段的反馈速度问题。文件变化后，Vite 不�
 
 大致流程如下：
 
-```mermaid
-%%{init: {'themeVariables': {'lineColor': '#7fa3ff'}}}%%
-flowchart TB
-    A[文件保存]
-    B[chokidar 监听变化]
-    C[定位 ModuleNode]
-    D[清理转换缓存]
-    E{是否存在 HMR 边界?}
-    F[生成 update 消息]
-    G[通过 WebSocket 推送]
-    H[浏览器 HMR client 接收]
-    I[重新 import 新模块]
-    J[执行 accept 回调]
-    K[局部更新视图]
-    L[整页刷新]
+```d2
+direction: down
 
-    A --> B --> C --> D --> E
-    E -->|是| F --> G --> H --> I --> J --> K
-    E -->|否| L
+A: 文件保存
+B: chokidar 监听变化
+C: 定位 ModuleNode
+D: 清理转换缓存
+E: 存在 HMR 边界? {
+  shape: diamond
+  class: decision
+}
+F: 生成 update 消息
+G: 通过 WebSocket 推送
+H: 浏览器 HMR client 接收
+I: 重新 import 新模块
+J: 执行 accept 回调
+K: 局部更新视图
+L: 整页刷新
 
-    style A fill:#7fa3ff29,stroke:#07f,stroke-width:1px,rx:4,ry:4
-    style B fill:#bbdefb,stroke:#0d47a1,stroke-width:1px,rx:4,ry:4
-    style C fill:#ffe0b2,stroke:#bf360c,stroke-width:1px,rx:4,ry:4
-    style D fill:#ffcdd2,stroke:#b71c1c,stroke-width:1px,rx:4,ry:4
-    style E fill:#e1bee7,stroke:#4a148c,stroke-width:1px,rx:4,ry:4
-    style F fill:#c8e6c9,stroke:#1b5e20,stroke-width:1px,rx:4,ry:4
-    style G fill:#bbdefb,stroke:#0d47a1,stroke-width:1px,rx:4,ry:4
-    style H fill:#7fa3ff29,stroke:#07f,stroke-width:1px,rx:4,ry:4
-    style I fill:#ffe0b2,stroke:#bf360c,stroke-width:1px,rx:4,ry:4
-    style J fill:#c8e6c9,stroke:#1b5e20,stroke-width:1px,rx:4,ry:4
-    style K fill:#c8e6c9,stroke:#1b5e20,stroke-width:1px,rx:4,ry:4
-    style L fill:#ffcdd2,stroke:#b71c1c,stroke-width:1px,rx:4,ry:4
+A -> B -> C -> D -> E
+E -> F: 是
+E -> L: 否
+F -> G -> H -> I -> J -> K
 ```
 
 HMR 的关键不是“文件变了就重新加载文件”，而是要找到一个可以接住变化的边界。
@@ -248,7 +208,7 @@ if (import.meta.hot) {
   -> 找不到边界，触发整页刷新
 ```
 
-这解释了一个常见现象：有些改动可以保留页面状态，有些改动会导致页面刷新。不是 Vite 随机决定的，而是模块图里是否存在合适的热更新边界。
+这解释了一个常见现象：有些改动可以保留页面状态，有些改动会导致页面刷新。不是 Vite 随意决定的，而是模块图里是否存在合适的热更新边界。
 
 ### 浏览器端更新
 
@@ -264,7 +224,7 @@ if (import.meta.hot) {
   -> 框架运行自己的局部更新逻辑
 ```
 
-对于 React 来说，真正决定组件状态能不能保留的，是 React Fast Refresh 的边界判断。Vite 提供 HMR 通道和模块更新机制，框架插件负责把这个能力翻译成框架内部能理解的刷新方式。
+对于 React 来说，组件状态能不能保留取决于 React Fast Refresh 的边界判断。Vite 提供 HMR 通道和模块更新机制，框架插件负责把这个能力翻译成框架内部能理解的刷新方式。
 
 ## 插件机制
 
@@ -300,7 +260,7 @@ export default {
 
 生产阶段则更接近完整构建工具链，会进入打包、分块、压缩和产物生成相关钩子。
 
-这也是 Vite 插件生态强的原因：同一套插件系统能覆盖开发体验和生产构建，但 Vite 会根据当前命令选择不同的执行路径。
+同一套插件系统能同时覆盖开发体验和生产构建，Vite 会根据当前命令选择不同的执行路径，这也是 Vite 插件生态丰富的原因。
 
 ## 生产构建
 
@@ -310,32 +270,21 @@ export default {
 
 大致流程如下：
 
-```mermaid
-%%{init: {'themeVariables': {'lineColor': '#7fa3ff'}}}%%
-flowchart TB
-    A[执行 vite build]
-    B[加载生产配置]
-    C[以 index.html 为入口]
-    D[构建完整模块图]
-    E[执行插件构建钩子]
-    F[Tree Shaking]
-    G[代码分块]
-    H[CSS 和静态资源处理]
-    I[压缩与哈希命名]
-    J[生成 dist]
+```d2
+direction: down
 
-    A --> B --> C --> D --> E --> F --> G --> H --> I --> J
+A: 执行 vite build
+B: 加载生产配置
+C: 以 index.html 为入口
+D: 构建完整模块图
+E: 执行插件构建钩子
+F: Tree Shaking
+G: 代码分块
+H: CSS 和静态资源处理
+I: 压缩与哈希命名
+J: 生成 dist
 
-    style A fill:#7fa3ff29,stroke:#07f,stroke-width:1px,rx:4,ry:4
-    style B fill:#bbdefb,stroke:#0d47a1,stroke-width:1px,rx:4,ry:4
-    style C fill:#ffe0b2,stroke:#bf360c,stroke-width:1px,rx:4,ry:4
-    style D fill:#c8e6c9,stroke:#1b5e20,stroke-width:1px,rx:4,ry:4
-    style E fill:#7fa3ff29,stroke:#07f,stroke-width:1px,rx:4,ry:4
-    style F fill:#c8e6c9,stroke:#1b5e20,stroke-width:1px,rx:4,ry:4
-    style G fill:#e1bee7,stroke:#4a148c,stroke-width:1px,rx:4,ry:4
-    style H fill:#bbdefb,stroke:#0d47a1,stroke-width:1px,rx:4,ry:4
-    style I fill:#ffe0b2,stroke:#bf360c,stroke-width:1px,rx:4,ry:4
-    style J fill:#c8e6c9,stroke:#1b5e20,stroke-width:1px,rx:4,ry:4
+A -> B -> C -> D -> E -> F -> G -> H -> I -> J
 ```
 
 生产构建会做开发阶段不适合做的事情：
@@ -347,63 +296,19 @@ flowchart TB
 - modulepreload：为入口 chunk 和直接依赖生成预加载提示。
 - 压缩：减小 JS、CSS 和资源体积。
 
-这里要注意一个差异：开发阶段的优化目标是“每次改动后的反馈速度”，生产阶段的优化目标是“用户访问时的加载效率”。两者不是同一个问题，所以 Vite 才会使用两套策略。
+开发阶段追求反馈速度，生产阶段追求加载效率，这是两个不同的问题，所以 Vite 才把开发与生产拆成两套策略。
 
 ## 为什么快
 
-Vite 的快，可以拆成几个具体原因。
+Vite 的快来自几个关键决策：
 
-### 启动时少做事
+- **启动时少做事**：传统打包器启动时要先构建完整依赖图再输出开发 bundle；Vite 启动时只准备服务器、插件、依赖预构建和入口 HTML，源码等请求到时再转换。所以启动时间不会随源码数量线性增长。
 
-传统打包开发服务器启动时，往往要先构建完整依赖图，再输出开发 bundle。项目越大，启动越慢。
+- **更新时少做事**：传统打包器每次变化都要重新生成受影响 bundle；Vite 的模块天然分开，文件变化只让浏览器重新 import 这个模块或 HMR 边界模块，HMR 成本接近“变化模块的转换成本”。
 
-Vite 启动时不打包业务源码。它只准备服务器、插件、依赖预构建和入口 HTML。业务模块等浏览器请求到时再转换。
+- **依赖和源码分开处理**：第三方依赖体积大、层级深但变化少，适合预构建加缓存；业务源码变化多但单文件成本低，适合按需转换加 HMR。两边互换处理方式都会出问题：把依赖当源码处理会拖慢首屏，把源码当依赖处理会拖慢启动。
 
-所以项目规模变大时，Vite 的启动时间不会和业务源码数量完全线性绑定。
-
-### 更新时少做事
-
-文件变化后，传统打包器通常需要重新计算受影响的 bundle。即使做了增量缓存，也还是要围绕 bundle 重新生成部分产物。
-
-Vite 的开发模式里，源码模块天然是分开的。某个文件变了，Vite 可以只让浏览器重新 import 这个模块或它的 HMR 边界模块。
-
-所以 HMR 的成本更接近“变化模块的转换成本”，而不是“整个应用的重新打包成本”。
-
-### 依赖和源码分开处理
-
-第三方依赖通常体积大、层级深，但变化少。业务源码变化多，但单个文件转换成本相对低。
-
-Vite 把这两类东西拆开：
-
-```text
-依赖
-  -> 预构建
-  -> 强缓存
-  -> 变更少
-
-源码
-  -> 按需转换
-  -> HMR
-  -> 变更频繁
-```
-
-这个分层很重要。如果所有东西都按源码一样逐文件请求，依赖会带来大量网络请求；如果所有东西都按依赖一样提前打包，业务代码又会拖慢启动和更新。
-
-### 转换和检查分离
-
-Vite 默认只做 TypeScript 转译，不做完整类型检查。原因是转译可以按文件完成，符合按需转换模型；类型检查需要理解整个项目的类型图，会拖慢开发服务器响应。
-
-所以常见实践是：
-
-```text
-vite dev
-  -> 负责快速转译和 HMR
-
-tsc --noEmit --watch
-  -> 独立负责类型检查
-```
-
-这不是“不要类型检查”，而是把类型检查从模块请求链路里拿出去，避免每次浏览器请求源码时都被全局静态分析阻塞。
+- **转换和检查分离**：Vite 默认只做 TS 转译不做类型检查，因为转译可按文件完成，类型检查要解析整个类型图会拖慢请求。把类型检查交给 `tsc --noEmit --watch` 独立跑，既不阻塞请求链路，也不丢类型质量。
 
 ## 和传统打包器的差异
 
@@ -426,51 +331,33 @@ Vite 的开发模式建立在浏览器原生 ESM 之上：先启动一个模块�
 | 浏览器角色 | 主要加载 Webpack 输出的 bundle，模块关系由 Webpack runtime 管理 | 参与原生 ESM 模块加载，模块请求本身暴露给 dev server             |
 | 生产构建   | 构建完整依赖图，输出压缩、分块、带 hash 的静态资源              | 同样构建完整依赖图，输出适合部署的静态资源                       |
 
-所以两者真正不同的地方，主要在开发阶段。
-
-Webpack 的优势是控制力强。因为所有模块都进入统一构建图，它能用 loader 和 plugin 处理非常复杂的资源类型、历史模块格式和高度定制的构建流程。代价是项目越大，冷启动和热更新越容易被构建图规模拖慢。
-
-Vite 的优势是开发链路更轻。业务源码不需要在启动时全部打包，浏览器请求到哪个模块，Vite 才转换哪个模块；文件变化时，也更容易把成本控制在变化模块和 HMR 边界附近。代价是 dev 和 build 不是完全同一条路径，某些只在生产构建中暴露的问题，仍然需要通过 `vite build` 验证。
-
-这也解释了为什么 Vite 不是完全取代 Webpack，而是重新划分了开发阶段的职责：开发时利用浏览器原生模块能力，生产时仍然回到完整构建。Webpack 更像通用构建平台，Vite 更像面向现代 ESM 项目的开发体验优化方案。
+两者真正不同的地方，主要在开发阶段。Webpack 走统一构建图，loader 和 plugin 能处理各种复杂资源和历史模块格式；代价是项目越大，冷启动和热更新越容易被构建图规模拖慢。Vite 把业务源码推迟到浏览器按需加载，文件变化时只处理 HMR 边界附近的模块；代价是 dev 和 build 不是完全同一条路径，某些只在生产构建中暴露的问题仍要靠 `vite build` 验证。Webpack 更像通用构建平台，Vite 更像面向现代 ESM 项目的开发体验优化方案，这正是 Vite 重新划分开发阶段职责的结果。
 
 ## 常见边界
 
-Vite 的开发体验很快，但它不是没有成本。
+Vite 的开发体验很快，但它不是没有成本：
 
-### 首屏模块请求可能变多
+- **首屏模块请求可能变多**：因为业务源码没有提前打包，浏览器会按模块发起请求。小项目几乎无感，超大项目或路由首屏依赖复杂时，仍然可能出现请求数量多的问题。Vite 依靠缓存、预构建、浏览器并发请求和按需加载来缓解这个问题，但它的开发模式本质上仍然是多模块请求。
 
-因为业务源码没有提前打包，浏览器会按模块发起请求。小项目几乎无感，超大项目或路由首屏依赖复杂时，仍然可能出现请求数量多的问题。
+- **TypeScript 默认不做类型检查**：Vite 能直接处理 `.ts` 文件，但默认只做转译。如果项目需要严格类型质量，应该在开发和 CI 中单独运行：
 
-Vite 依靠缓存、预构建、浏览器并发请求和按需加载来缓解这个问题，但它的开发模式本质上仍然是多模块请求。
+  ```bash
+  tsc --noEmit
+  ```
 
-### TypeScript 默认不做类型检查
+  或者使用插件把类型检查结果接入浏览器错误提示。
 
-Vite 能直接处理 `.ts` 文件，但默认只做转译。如果项目需要严格类型质量，应该在开发和 CI 中单独运行：
+- **HMR 依赖边界质量**：HMR 能不能精准更新，取决于模块是否能形成稳定边界。纯工具模块、全局副作用模块、复杂状态初始化模块，可能无法安全热替换。这类场景下，整页刷新反而是更稳妥的选择。
 
-```bash
-tsc --noEmit
-```
+- **开发和生产不是完全同一条链路**：Vite dev 和 Vite build 的目标不同，内部路径也不同。所以有些问题只会在生产构建暴露：
 
-或者使用插件把类型检查结果接入浏览器错误提示。
+  - 动态导入路径无法静态分析。
+  - 构建目标浏览器不支持某些语法。
+  - 第三方包的 ESM/CJS 入口在构建时解析不同。
+  - 资源路径依赖 `base` 配置。
+  - chunk 拆分后出现加载失败或缓存问题。
 
-### HMR 依赖边界质量
-
-HMR 能不能精准更新，取决于模块是否能形成稳定边界。纯工具模块、全局副作用模块、复杂状态初始化模块，可能无法安全热替换。
-
-这类场景下，整页刷新反而是更稳妥的选择。
-
-### 开发和生产不是完全同一条链路
-
-Vite dev 和 Vite build 的目标不同，内部路径也不同。所以有些问题只会在生产构建暴露，比如：
-
-- 动态导入路径无法静态分析。
-- 构建目标浏览器不支持某些语法。
-- 第三方包的 ESM/CJS 入口在构建时解析不同。
-- 资源路径依赖 `base` 配置。
-- chunk 拆分后出现加载失败或缓存问题。
-
-因此一个 Vite 项目不能只跑 dev server。关键改动仍然需要执行 `vite build`，并在必要时预览构建产物。
+  因此一个 Vite 项目不能只跑 dev server。关键改动仍然需要执行 `vite build`，并在必要时预览构建产物。
 
 ## 总结
 
@@ -478,11 +365,4 @@ Vite 的设计核心，是把开发阶段从“先全量打包”改成“按需
 
 开发时，它利用浏览器原生 ESM，让源码模块按请求转换、按模块更新；依赖则通过预构建和缓存提前稳定下来。生产时，它再回到完整构建流程，做 Tree Shaking、代码分块、资源哈希、压缩和预加载优化。
 
-所以理解 Vite，不应该只记住“快”，而应该记住它快在哪里：
-
-- 启动快：不提前打包全部业务源码。
-- 更新快：文件变化后只处理受影响模块和 HMR 边界。
-- 加载稳：第三方依赖预构建并缓存。
-- 构建完整：生产环境仍然走完整打包和资源优化。
-
-这套设计的本质，是把开发体验和生产优化分开处理：开发阶段优先反馈速度，生产阶段优先交付质量。
+所以理解 Vite，不该只记"快"。把开发与生产拆成两套策略，各按各自场景的优化目标设计，才是它快的原因。
