@@ -128,37 +128,31 @@ Rspress 文档位于 `apps/docs/`。文档生成脚本是 `scripts/generate-docs
 ## D2 规范
 
 - 表示流程（如数据流、调用链、状态转换、流水线步骤）时，避免使用 ```text 代码块，应优先使用 d2 图。
-- 只统一少量语义节点的背景色，不限制 D2 的结构、方向、布局、节点组织方式和默认样式。
-- D2 全局渲染参数统一配置在 `apps/docs/rspress.config.ts` 的 `d2PreRenderOptions` 中，不要在单篇文档里重复声明全局样式。
-- `d2PreRenderOptions` 统一使用：
+- D2 全局样式统一配置在 `apps/docs/rspress.config.ts` 的 `d2PreRenderOptions` 中，单篇文档不要重复声明全局样式或切换主题。
+- 只维护少量语义 class，其他节点、分组标题和连线默认使用 D2 样式；不要单独设置文字颜色、线条颜色、边框、圆角、箭头样式。
+- 当前全局 class：
 
 ```ts
-const d2PreRenderOptions: D2PreRenderOptions = {
-  prelude: `
 classes: {
   group: {
     style.fill: "#fffaf0"
   }
+  subgroup: {
+    style.fill: "#fffdf7"
+  }
   fail: {
     style.fill: "#ffcdd2"
-  }
-  ok: {
-    style.fill: "#c8e6c9"
   }
   decision: {
     style.fill: "#e1bee7"
   }
 }
-`,
-}
 ```
 
-- 普通节点直接使用 D2 默认样式，不设置 `class`。
 - 所有节点、分组标题和连线都使用 D2 默认样式；不要单独设置文字颜色、线条颜色、边框、圆角、箭头样式。
-- D2 配色使用低饱和浅色系，不要为单篇文档切换成新主题。
 - 分组容器使用 `class: group`。
-- 失败、危险或需慎重的节点使用 `class: fail`。
-- 成功或完成节点使用 `class: ok`。
+- 嵌套分组容器使用 `class: subgroup`。
+- 危险或需慎重的节点使用 `class: fail`。
 - 判断节点使用 `class: decision`。
-- 除 `group`、`fail`、`ok`、`decision` 之外，不新增全局 class；单篇文档确有语义需要时再局部定义。
+- 普通节点不设置 `class`；除 `group`、`subgroup`、`fail`、`decision` 之外，不新增全局 class。单篇文档确有语义需要时再局部定义。
 - 控制节点大小时使用 `width` 和 `height`；D2 没有通用 CSS 式 `padding`，需要更大留白时优先增大节点尺寸。

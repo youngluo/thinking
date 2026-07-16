@@ -56,6 +56,9 @@ const d2PreRenderOptions: D2PreRenderOptions = {
     group: {
       style.fill: "#fffaf0"
     }
+    subgroup: {
+      style.fill: "#fffdf7"
+    }
     fail: {
       style.fill: "#ffcdd2"
     }
