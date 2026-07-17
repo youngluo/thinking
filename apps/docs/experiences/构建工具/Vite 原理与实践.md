@@ -9,6 +9,12 @@ draft: true
 
 Vite 的核心思路，是在开发阶段和生产阶段采用两套不同策略。开发时，它尽量不提前打包业务代码，而是把源码转换成浏览器可直接加载的原生 ESM，按需交给浏览器；生产时，再进入完整构建流水线，集中完成 Tree Shaking、代码分块和资源优化。
 
+## Vite 8 主要更新点
+
+Vite 8 这次比较大的变化，不在"开发按需、生产构建"这条主线上，而在底层工具链。依赖预构建和生产构建都开始走 Rolldown，原来 Rollup 生态里的配置和插件能力还在，但新配置更推荐写到 `rolldownOptions`。JS / TS 转译、生产压缩则更多交给 Oxc：开发时减少单个模块的 transform 时间，生产时也能压低压缩阶段的开销。
+
+其他变化更偏工程细节。CSS 压缩默认走 Lightning CSS，图片、字体和 `public` 目录资源仍然由 Vite 统一处理 URL 和缓存策略；插件钩子还是围绕 `resolveId`、`load`、`transform` 展开，只是 Vite 8 多了 hook filters，可以在进入 JavaScript 钩子前先过滤模块。`resolve.tsconfigPaths` 这类常用能力也有了内置开关，不过它不是要替代所有插件，只是让简单场景少装一层适配。
+
 ## 开发阶段
 
 开发阶段可以拆成四段：启动 dev server、首次打开页面、按需加载模块、文件变化后的 HMR 更新。
@@ -83,7 +89,7 @@ hmr: 热更新 {
 
 常见配置：
 
-```ts
+```ts fold title="vite.config.ts"
 import { defineConfig } from 'vite'
 
 export default defineConfig({
@@ -136,7 +142,7 @@ CSS 和静态资源也沿用这套按需请求模型。CSS 被导入时，Vite �
 
 插件可以介入这条链路，transform 顺序由插件的 `enforce: 'pre' | 'post'` 和注册顺序共同决定。比如把 `.svg` 当成可导入的字符串：
 
-```ts
+```ts fold
 import type { Plugin } from 'vite'
 
 export default function svgAsString(): Plugin {
@@ -227,7 +233,7 @@ client -> client: 整页刷新
 
 如果脱离框架插件，也可以用底层 API 手写 HMR 边界。例如监听某个工具模块的变化：
 
-```ts
+```ts fold
 if (import.meta.hot) {
   import.meta.hot.accept('./utils', (newModule) => {
     // 用新模块替换旧实现
@@ -274,7 +280,7 @@ start -> config -> entry -> graph -> hooks -> optimize -> assets -> emit -> dist
 
 构建配置示例：
 
-```ts
+```ts fold title="vite.config.ts"
 import { defineConfig } from 'vite'
 
 export default defineConfig({
@@ -298,13 +304,25 @@ export default defineConfig({
 
 开发阶段追求"每次改动后的反馈速度"，生产阶段追求"用户访问时的加载效率"。这是两个不同的问题，所以 Vite 没有把 dev server 的按需转换链路直接搬到 build 里。
 
+## dev 与 build 差异
+
+前面已经分别展开了开发阶段和生产阶段，这里只收束几个实际项目里容易踩到的问题。dev 能跑起来，并不代表 build 一定通过。
+
+- **变量动态导入**：dev 只处理当前浏览器真正请求到的模块，没访问到的路径可能不会触发；build 必须提前枚举候选文件，像 `import(path)` 这种完全动态的路径，可能导致构建失败或对应 chunk 没生成。处理时要让动态导入范围可分析，例如固定目录和后缀；批量页面或组件导入优先用 `import.meta.glob`。
+
+- **部署路径问题**：本地 dev server 通常跑在根路径，资源 URL 很容易看起来正常；build 产物里的 JS、CSS、图片 URL 会受 `base` 影响，部署到 CDN、子路径或非根目录时可能 404。处理时要根据部署路径设置 `base`，再用 `vite preview` 或真实部署环境验证。
+
+- **第三方依赖导出不一致**：dev 预构建后可能把 CJS 依赖整理成浏览器可加载的 ESM，页面暂时能跑；build 重新打包时可能报 `default is not exported by ...`、`X is not exported by ...`，也可能因为错误的 `sideEffects` 声明把样式或初始化代码摇掉。处理时先检查实际导入方式和依赖入口，必要时改成命名导入、升级依赖、加别名或调整 Tree Shaking 配置。
+
+关键改动最好跑 `vite build` 验证，并用 `vite preview` 预览产物。dev server 只能证明开发链路能跑通，不能替代生产构建验证；类型检查则需要交给 `tsc --noEmit` 或独立插件处理。
+
 ## 插件机制
 
 ### 钩子分类
 
 插件是 Vite 连接开发阶段和生产阶段的扩展层。Vite 8 的插件接口基于 Rolldown / Rollup 插件模型，再补充少量 Vite 自己的钩子。一个插件可以简化成这样：
 
-```ts
+```ts fold
 export default {
   name: 'example-plugin',
 
@@ -344,7 +362,7 @@ export default {
 
 举个例子，手写一个 alias 插件把 `@/` 映射到 `src/`：
 
-```ts
+```ts fold
 import type { Plugin } from 'vite'
 import { fileURLToPath } from 'node:url'
 
@@ -372,17 +390,99 @@ export default function myAlias(): Plugin {
 - 调试分析：`vite-plugin-inspect`（可视化插件钩子调用链）、`rollup-plugin-visualizer`（构建产物占比）。
 - 内置 Devtools：`devtools: true` 开启 `@vitejs/devtools`，从 dev server 直接看模块图、依赖、转换链。
 
-## dev 与 build 的差异与验证
+### Module Federation
 
-前面已经分别展开了开发阶段和生产阶段，这里只收束几个实际项目里容易踩到的问题。dev 能跑起来，并不代表 build 一定通过。
+Vite 本身不内置 Module Federation。需要远程模块加载时，可以通过 `@module-federation/vite` 接入，核心配置就是 remote 暴露什么，以及 host 从哪里消费。
 
-- **变量动态导入**：dev 只处理当前浏览器真正请求到的模块，没访问到的路径可能不会触发；build 必须提前枚举候选文件，像 `import(path)` 这种完全动态的路径，可能导致构建失败或对应 chunk 没生成。处理时要让动态导入范围可分析，例如固定目录和后缀；批量页面或组件导入优先用 `import.meta.glob`。
+remote 端负责暴露模块：
 
-- **部署路径问题**：本地 dev server 通常跑在根路径，资源 URL 很容易看起来正常；build 产物里的 JS、CSS、图片 URL 会受 `base` 影响，部署到 CDN、子路径或非根目录时可能 404。处理时要根据部署路径设置 `base`，再用 `vite preview` 或真实部署环境验证。
+```ts fold title="remote/vite.config.ts"
+import { federation } from '@module-federation/vite'
+import { defineConfig } from 'vite'
 
-- **第三方依赖导出不一致**：dev 预构建后可能把 CJS 依赖整理成浏览器可加载的 ESM，页面暂时能跑；build 重新打包时可能报 `default is not exported by ...`、`X is not exported by ...`，也可能因为错误的 `sideEffects` 声明把样式或初始化代码摇掉。处理时先检查实际导入方式和依赖入口，必要时改成命名导入、升级依赖、加别名或调整 Tree Shaking 配置。
+export default defineConfig({
+  plugins: [
+    federation({
+      // remote 应用名，用来标识远程容器。
+      name: 'remote',
+      // 构建后生成的远程入口文件。
+      filename: 'remoteEntry.js',
+      // 对外暴露的模块，key 以 ./ 开头，value 是内部文件路径。
+      exposes: {
+        './Button': './src/Button.tsx',
+      },
+      // 运行时复用的依赖，React 这类依赖通常需要保持单例。
+      shared: {
+        react: { singleton: true },
+        'react-dom': { singleton: true },
+      },
+    }),
+  ],
+})
+```
 
-关键改动最好跑 `vite build` 验证，并用 `vite preview` 预览产物。dev server 只能证明开发链路能跑通，不能替代生产构建验证；类型检查则需要交给 `tsc --noEmit` 或独立插件处理。
+host 端通过 `remotes` 指向远程入口：
+
+```ts fold title="host/vite.config.ts"
+import { federation } from '@module-federation/vite'
+import { defineConfig } from 'vite'
+
+export default defineConfig({
+  plugins: [
+    federation({
+      // host 应用名，用来标识当前容器。
+      name: 'host',
+      // 声明 host 可以消费哪些远程应用。
+      remotes: {
+        // host 里的导入别名，例如 import 'remoteApp/Button'。
+        remoteApp: {
+          // Vite remote 通常按 ESM 入口加载。
+          type: 'module',
+          // 对应 remote 端 name 字段。
+          name: 'remote',
+          // remote 端暴露出来的远程地址，对应 filename 字段。
+          entry: 'http://localhost:3001/remoteEntry.js',
+        },
+      },
+      // 与 remote 端保持一致，避免重复加载 React。
+      shared: {
+        react: { singleton: true },
+        'react-dom': { singleton: true },
+      },
+    }),
+  ],
+})
+```
+
+如果 host 要加载 Webpack 产出的 `var` remote，要把入口格式和全局容器名写清楚，同时确认共享依赖版本和运行时版本：
+
+```ts fold title="host/vite.config.ts"
+federation({
+  name: 'host',
+  remotes: {
+    remoteApp: {
+      // Webpack remote 通常按全局变量容器加载。
+      type: 'var',
+      // 对应 remote 的 name。
+      name: 'webpackRemote',
+      // remote 暴露出来的入口地址。
+      entry: 'http://localhost:3002/remoteEntry.js',
+      // remoteEntry 挂到全局对象上的变量名。
+      entryGlobalName: 'webpackRemote',
+    },
+  },
+})
+```
+
+然后在 host 里按「导入前缀/暴露模块名」导入：
+
+```tsx fold
+import RemoteButton from 'remoteApp/Button'
+
+export function App() {
+  return <RemoteButton />
+}
+```
 
 ## 总结
 
