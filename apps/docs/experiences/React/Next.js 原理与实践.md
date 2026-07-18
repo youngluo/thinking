@@ -5,7 +5,7 @@ draft: true
 
 # Next.js 原理与实践
 
-Next.js 解决的不是「让 React 跑在 Node.js」这么简单，而是让同一棵组件树在服务端和客户端各执行一次，并且两次执行能相互衔接：服务端生成首屏 HTML 与 RSC payload，浏览器用同一棵组件树接管 DOM、恢复事件与响应式状态。
+Next.js 解决的不是「让 React 跑在 Node.js」这么简单，而是协调服务端渲染与客户端接管：服务端生成首屏 HTML 和 RSC payload，浏览器解析这些结果，再让 Client Component 接管已有 DOM、恢复事件与响应式状态。
 
 这条双端协作的链路在 App Router 下被进一步收紧：
 
@@ -19,72 +19,65 @@ Next.js 解决的不是「让 React 跑在 Node.js」这么简单，而是让同
 
 ## RSC 与 SSR 基础链路
 
-### 从组件到 HTML
+### RSC 渲染与 HTML 预渲染
 
-服务端没有 DOM，Next.js 通过 `react-dom/server` 把组件树转换成 HTML 字符串或流：
+App Router 的服务端渲染包含两个相互衔接的阶段：
 
-```ts
-import { renderToString, renderToReadableStream } from 'react-dom/server'
+1. React 执行匹配路由的 Server Component，将渲染结果编码为 RSC payload；
+2. Next.js 使用 RSC payload 和 Client Component 代码预渲染 HTML，供浏览器直接显示首屏。
 
-const html = await renderToString(<App />)
-
-const stream = await renderToReadableStream(<App />, {
-  bootstrapScripts: ['/assets/main.js'],
-})
-```
-
-`renderToString` 只产出应用内容；真正返回给浏览器的响应还要补上 `<html>`、`<head>`、`<script>`、样式以及 RSC payload：
+RSC 渲染负责描述组件结构、数据和客户端模块边界，HTML 预渲染负责生成浏览器可直接展示的内容。Client Component 会参与 HTML 预渲染，但其中的事件、状态和 Effect 要等浏览器完成 hydration 后才会生效。
 
 ```d2 maxHeight=480
 shape: sequence_diagram
 
-browser -> server: 请求 URL
-server -> server: 匹配路由与 params
-server -> server: 渲染 Server Component 树
-server -> server: 生成 RSC payload
-server -> server: 按 Suspense 边界流式输出 HTML
-server -> browser: HTML + RSC payload
+browser: 浏览器
+next: Next.js
+rsc: React Server
+ssr: React DOM Server
+
+browser -> next: 请求 URL
+next -> rsc: 执行 Server Component
+rsc -> next: 生成 RSC payload
+next -> ssr: 结合 Client Component 预渲染
+ssr -> next: 生成 HTML
+next -> browser: 返回包含 HTML 与 RSC chunk 的响应
 ```
 
-浏览器收到响应后会看到两个独立但配对的部分：
+RSC payload 是供 React 消费的数据格式，主要包含：
 
-- 一份首屏 HTML，可以立刻画出非交互内容；
-- 一份 RSC payload，描述服务端组件树以及 Client Component 在树中的位置。
+- Server Component 的渲染结果；
+- Client Component 的模块引用和渲染位置；
+- 传给 Client Component 的可序列化 props；
+- Suspense、异步数据和错误等信息。
 
-两者配合后，React 才能把 HTML「升级」为可交互的应用。
+### 首次响应如何携带两份产物
 
-### HTML 与 RSC payload 对照
+首次访问时，HTML 和 RSC payload 通常通过同一个 `text/html` 响应返回。HTML 作为普通标签写入响应，RSC payload 则被拆成 chunk，通过内联脚本写入 Next.js 的客户端数据队列。它们可以随着服务端渲染进度交错到达。
 
-服务端渲染一棵组件树时，会同时产出两份互补的产物：
+```html
+<article>
+  <h1>Next.js 渲染原理</h1>
+  <button>0 likes</button>
+</article>
 
-```d2
-direction: right
-
-tree: 同一棵 React 树 {
-  class: group
-}
-
-html: HTML 流
-rsc: RSC payload
-
-tree -> html: 序列化到响应体
-tree -> rsc: 编码成 Flight 格式
+<script>
+  self.__next_f.push([1, '...RSC chunk...'])
+</script>
 ```
 
-- HTML 流：浏览器用来立刻渲染成 DOM，是首屏可见内容的来源；
-- RSC payload（Flight 协议）：浏览器用来对齐 React 树，是后续 Hydration 与客户端导航的依据。它含三类信息——Server Component 渲染结果、Client Component 位置及 JS 引用、传给 Client Component 的 props——让客户端无需重跑 Server Component 也能重建与服务端一致的树结构。
+浏览器的 HTML Parser 会把普通标签解析成 DOM，同时执行这些内联脚本，将 RSC chunk 交给 Next.js 客户端运行时。`self.__next_f` 是 Next.js 当前使用的传输实现，不属于 RSC 协议本身。
+
+后续客户端导航不需要重新获取完整 HTML 文档。Next.js 请求目标路由的 RSC payload，再把新的路由段合并到已有组件树中。
+
+### HTML 与 RSC payload 如何对应
 
 考虑一棵典型组件树：
 
-```tsx
-// app/article/[id]/page.tsx — Server Component
+```tsx fold title="app/article/[id]/page.tsx"
 import { LikeButton } from './like-button'
 
-export default async function Page({
-  params,
-}: {
-  params: Promise<{ id: string }>
-}) {
+export default async function Page({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const article = await getArticle(id)
 
@@ -98,122 +91,94 @@ export default async function Page({
 }
 ```
 
-```tsx
-// app/article/[id]/like-button.tsx — Client Component
+```tsx fold title="app/article/[id]/like-button.tsx"
 'use client'
 
 import { useState } from 'react'
 
 export function LikeButton({ count }: { count: number }) {
   const [likes, setLikes] = useState(count)
-  return (
-    <button onClick={() => setLikes(likes + 1)}>{likes} likes</button>
-  )
+  return <button onClick={() => setLikes(likes + 1)}>{likes} likes</button>
 }
 ```
 
-服务端处理这棵树时，会把每个节点映射成两种描述：
+`Page` 在服务端执行并获取文章数据。RSC payload 记录它的渲染结果，同时保存 `LikeButton` 的模块引用和 `count`。HTML 中则包含文章内容和预渲染后的按钮，浏览器收到后可以立即显示。
 
-```text
-# HTML 流（写入响应体的 <body> 区域）
-<article>
-  <h1>Hello RSC</h1>
-  <p>这篇文章介绍了 RSC 的工作机制。</p>
-  <button>0 likes</button>
-</article>
+两份产物描述的是同一份界面，因此内容存在对应关系，但用途和格式不同：HTML 面向浏览器渲染，RSC payload 面向 React。浏览器不会重新执行 `Page`，而是使用它已经返回的渲染结果；`LikeButton` 的客户端 JavaScript 加载后，才会执行组件函数并接管已有按钮。
 
-# RSC payload（Flight 格式，写入响应体另一段）
-[
-  { tag: 'article', children: [
-    { tag: 'h1', text: 'Hello RSC' },
-    { tag: 'p', text: '这篇文章介绍了 RSC 的工作机制。' },
-    { tag: '$', ref: 'LikeButton', props: { count: 0 } }
-  ]}
-]
-```
+### 嵌套布局如何进入 RSC payload
 
-HTML 是给浏览器看的视觉结果；RSC payload 是给 React 看的结构描述。两者中 `LikeButton` 对应的内容（这里都是 `0 likes`）必须一致，否则浏览器比对时会判定 mismatch。
+一个 URL 通常会同时匹配页面和多层布局。以 `/blog/hello` 为例，`RootLayout`、`AppLayout`、`BlogLayout` 和 `BlogPage` 会依次嵌套。初始渲染时，这些路由段的 Server Component 结果会编码进当前路由的 RSC payload。
 
-### 嵌套布局与 RSC payload 合并
-
-每次请求到达时，Next.js 从根 layout 向下逐段渲染。每一段都贡献自己的 Server Component 树，最终整棵树被合并进同一份 RSC payload：
-
-```d2
-direction: down
-
-root: RootLayout {
-  app: AppLayout
-  layout: BlogLayout
-  page: BlogPage
-}
-
-app -> layout -> page
-```
-
-请求 `/blog/hello` 时，RSC payload 实际包含的是 `RootLayout > AppLayout > BlogLayout > BlogPage` 这条路径上所有 Server Component 的渲染结果，Client Component 在树中以「位置 + 引用」的形式占位。
+后续客户端导航会复用已经加载的共享布局，再将新获取的路由段数据合并到现有组件树中。
 
 ## Hydration
 
-Hydration 是把服务端渲染的 HTML 升级为可交互应用的过程。浏览器收到 HTML 后，React 用组件树与之对齐，绑定事件、恢复响应式状态，让原本静态的标记变成可点击、可响应的应用。
+Hydration 是 React 复用服务端 HTML，并为 Client Component 恢复交互能力的过程。RSC payload 本身只是数据，不具备交互能力；React 事件、客户端状态、Effect 和浏览器 API 都来自 Client Component 的 JavaScript。链接、表单和 `<details>` 等原生 HTML 行为不依赖 hydration。
 
-Next.js 客户端入口仍然会创建 React 应用并调用 `hydrateRoot`：
+### 初始 Hydration 过程
 
-```ts
-import { hydrateRoot } from 'react-dom/client'
-import { startTransition } from 'react'
-
-startTransition(() => {
-  hydrateRoot(document, initialTree)
-})
-```
-
-`hydrateRoot` 告诉 React：容器里已经有服务端输出，不要重新创建 DOM。React 在客户端执行首次 render，与服务端输出对齐后绑定事件、恢复响应式依赖。
-
-### 客户端如何消费 RSC payload
-
-App Router 下的 Hydration 比标准 React 多一步：除了 HTML，还需要吃进 RSC payload 来重建 Server Component 树。浏览器拿到响应后并不会重新执行任何 Server Component。它手上有三样东西：
-
-- 初始 HTML（已经在 DOM 里）；
-- RSC payload（描述这棵树的最终形态）；
-- Client Component 的 JS bundle（按需加载）。
-
-`hydrateRoot` 启动后，React 按以下顺序把它们拼起来：
+初次加载时，HTML 解析与 RSC 数据解析可以并行推进，最终在 React Reconciler 中汇合：
 
 ```d2
 direction: down
 
-parse: 解析 RSC payload
-tree: 构造 fiber 树
-align: 把 Server Component 输出对齐到 DOM
-load: 为 Client Component 加载 JS
-hydrate: 绑定事件与副作用
+response: 接收 HTML 响应
+html: HTML Parser 解析标签
+dom: 生成 DOM 并显示页面
+flight: React Flight 解析 RSC chunk
+elements: 得到 React element、数据与模块引用
+modules: 加载 Client Component JavaScript
+fiber: Reconciler 创建 Fiber 树
+hydrate: Host Fiber 认领已有 DOM
+commit: 绑定事件与 ref，执行 Effect
 
-parse -> tree -> align
-parse -> load -> hydrate
-align -> hydrate
+response -> html -> dom
+response -> flight -> elements
+elements -> modules -> fiber
+elements -> fiber
+dom -> hydrate
+fiber -> hydrate -> commit
 ```
 
-具体每一步：
+1. **显示 HTML**。浏览器解析已经到达的 HTML，生成 DOM 并显示页面。这一步不需要等待 Client Component JavaScript。
+2. **解析 RSC payload**。React Flight 按 ID 登记并反序列化 RSC chunk，得到 React element、普通数据和 Client Component 模块引用。引用的 chunk 尚未到达时，React 会保留待处理依赖，并由 Suspense 显示 fallback。
+3. **加载客户端模块**。Next.js 根据模块引用加载 Client Component JavaScript。模块就绪后，组件类型与 payload 中的 props 组成 Client Component element。
+4. **创建 Fiber**。Next.js 调用 React 的 hydration 入口后，Reconciler 根据这些 element 创建 Fiber。RSC payload 不直接包含 Fiber，Fiber 是 React 在协调阶段生成的运行时数据结构。
+5. **复用 DOM**。Reconciler 遍历 Fiber 时，只有 Host Component 和文本对应实际 DOM。React 维护下一个可复用 DOM 节点的位置，并按 Fiber 顺序检查节点类型及相关内容；匹配成功后，将 Fiber 关联到已有节点，而不是重新创建节点。
+6. **提交交互**。Client Component 首次渲染结果与已有 DOM 对齐后，React 绑定事件和 ref，并按时机执行 Effect。此后状态更新进入正常的客户端渲染流程。
 
-1. **解析 payload**：React 把 RSC payload 反序列化成内存结构。Server Component 节点已经带有渲染结果（HTML 字符串），Client Component 节点只有引用 `ref` 与 props。
+底层 hydration 由 React 的 `hydrateRoot` 完成，Next.js 会自动创建客户端入口，应用代码通常不需要直接调用它。
 
-2. **加载 Client Component JS**：根据 payload 里的引用，浏览器按需请求对应的 chunk。Next.js 在编译期给每个 Client Component 入口打上 `__next_internal_client_reference__` 标记，React 用它定位 JS 模块。
+### Fiber 如何复用 DOM 并恢复交互
 
-3. **构造 fiber 树**：React 在内存里构造一棵 fiber 树。Server Component 节点的 DOM 直接来自 payload，不执行任何 JS；Client Component 节点用 props 实例化，运行 `useState`、`useEffect` 等 Hook。
+Reconciler 会统一创建客户端 Fiber 树，但不同节点的来源并不相同。Server Component 函数已经在服务端执行，不会出现在客户端 Fiber 树中；它返回的 React element 会生成 Host Component、文本等 Fiber。Client Component 的模块引用解析完成后会生成组件 Fiber，浏览器执行组件函数，再为其返回结果继续创建 Fiber。
 
-4. **对齐到 DOM**：React 把已有 HTML 与 fiber 树逐节点对比。Server Component 的 DOM 复用，Client Component 占位 DOM 与其实例绑定。
+只有 Host Component 和文本 Fiber 对应实际 DOM。React 不使用节点 ID 建立对应关系，而是让 Fiber 的深度优先遍历顺序与 DOM 的文档顺序同步推进。[内部通过两个游标维护当前位置](https://github.com/react/react/blob/main/packages/react-reconciler/src/ReactFiberHydrationContext.js#L78-L82)：`hydrationParentFiber` 记录当前父 Fiber，`nextHydratableInstance` 指向下一个可以认领的 DOM 节点。
 
-5. **绑定事件**：React 给 Client Component 节点挂上事件委托、ref、副作用，让页面真正可交互。
+1. 进入 hydration 时，`nextHydratableInstance` 指向根容器中的第一个可复用节点；
+2. 遇到 Host Component 时，React 检查候选 DOM 的节点类型、标签名和相关内容。匹配成功后执行类似 `fiber.stateNode = instance` 的关联，再进入该 DOM 的第一个子节点；
+3. 遇到组件 Fiber 或 Fragment 时，由于它们没有自己的 DOM，游标不会移动。React 继续处理其返回的 Host Fiber；
+4. 一个 Host Fiber 的子树完成后，游标移到下一个可复用兄弟节点。节点类型、文本或树结构无法对应时，React 会报告 hydration mismatch，并在相应边界改用客户端渲染。
 
-RSC payload 的核心价值是让客户端无需重新执行 Server Component：payload 已经携带了渲染结果，React 只需要按结构填回去。这就是 Server Component 能被排除在 client bundle 之外、却仍能在客户端重建出同一棵树的关键。
+以 `LikeButton` 为例，RSC payload 只提供客户端模块引用和可序列化的 `count`。浏览器加载并执行组件后，才会重新建立交互所需的信息：
 
-后续客户端导航（点击 `<Link>`）时，浏览器只拿新的 RSC payload，不重新下载 HTML。React 拿到 payload 后做差异化更新（类似 reconcile），只刷新变化的子树。
+| 信息            | 来源                                | Hydration 时的处理                |
+| --------------- | ----------------------------------- | --------------------------------- |
+| `useState`      | 执行 Client Component 时调用 Hook   | 保存到组件 Fiber 的 Hook 链表     |
+| `useEffect`     | 执行 Client Component 时注册 Effect | 保存到组件 Fiber，提交后执行      |
+| `ref`           | Client Component 返回的 element     | 提交阶段关联到对应 DOM            |
+| `onClick` 等事件 | Host element 的 props                | 保存为 Host Fiber 对应的当前 props |
+
+React 通常在根容器统一监听浏览器事件。事件触发后，React 根据目标 DOM 找到对应 Fiber，再从当前 props 中读取并调用处理函数。因此，交互能力不是从 HTML 中推断出来的，也不是由 RSC payload 直接恢复的，而是浏览器执行 Client Component 后重新建立的。Server Component 返回的 Host element 同样会认领 DOM，但没有客户端 Hook、Effect 和事件函数时，只需完成结构对齐。
 
 ### Streaming 与 Suspense
 
-Next.js 默认按 Suspense 边界分段写出 HTML。每个 Suspense 边界内的子树可以独立完成、独立流出，浏览器不需要等整页 HTML：
+没有 Streaming 时，服务端需要等整棵页面树渲染完成，再一次性发送结果。只要其中一处数据较慢，浏览器就无法提前看到其他已经完成的内容。
 
-```tsx
+Streaming 允许服务端边渲染边发送结果。Suspense 边界负责划分流式输出的范围：边界内的内容尚未完成时，Next.js 先发送边界外的 HTML 和 fallback，这部分构成可立即显示的 HTML 壳；内容完成后，再把对应的 HTML 与 RSC 数据发送给浏览器。
+
+```tsx fold title="app/page.tsx"
 import { Suspense } from 'react'
 
 export default function Page() {
@@ -229,63 +194,34 @@ export default function Page() {
 ```
 
 ```d2
-direction: right
+shape: sequence_diagram
 
-ssr: 服务端 {
-  class: group
+server: 服务端
+browser: 浏览器
+react: React
 
-  shell: 输出 HTML 壳
-  resolve: 解决 PostList 数据
-  stream: 流式写入 PostList HTML
-}
-
-client: 浏览器 {
-  class: group
-
-  paint: 立即画出 HTML 壳
-  hydrate_shell: Hydration 壳
-  patch: 补丁式插入 PostList HTML
-  ready: PostList 可交互 {
-    class: ok
-  }
-}
-
-ssr.shell -> client.paint
-client.paint -> client.hydrate_shell
-ssr.resolve -> ssr.stream -> client.patch -> client.ready
+server -> browser: 发送 HTML 壳与 fallback
+browser -> browser: 显示已到达的内容
+server -> browser: 发送已完成边界的 HTML 与 RSC 数据
+browser -> react: 解析新到达的边界数据
+react -> browser: 用完整内容替换 fallback
 ```
 
-`loading.tsx` 在 App Router 中会被自动包成 page 的 Suspense 边界。但这条边界**只覆盖 `page.tsx`，不覆盖同段的 `layout.tsx`**——如果 layout 直接读 runtime 数据（`cookies()` / `headers()` / 未缓存的 fetch），layout 会阻塞整段渲染，期间 `loading.tsx` 不会作为它的 fallback 展示，用户看到的是空白页：
+Streaming 决定内容何时到达浏览器，hydration 决定 Client Component 何时具备交互能力。某个 Suspense 边界可以已经显示，但仍在等待对应的客户端 JavaScript 完成 hydration。
 
-```tsx
-// app/dashboard/layout.tsx
-import { cookies } from 'next/headers'
-
-export default async function Layout({ children }: { children: React.ReactNode }) {
-  const theme = (await cookies()).get('theme')?.value
-  return <div data-theme={theme}>{children}</div>
-}
-```
-
-正确做法是 layout 内部用 `<Suspense>` 隔离 runtime 数据读取，或者把读取下移到 `page.tsx`，让 `loading.tsx` 自然兜底。
+`loading.tsx` 会成为自动 Suspense 边界的 fallback。该边界覆盖同段的 `page.tsx` 及其子级，但不覆盖同段的 `layout.tsx`。如果 `layout.tsx` 读取 `cookies()`、`headers()` 或未缓存数据，导航会等到布局完成。可以把读取下移到 `page.tsx`，或拆到由 `<Suspense>` 包裹的子组件中。
 
 ### 选择性 Hydration
 
-React 18+ 在 Streaming SSR 下提供选择性 Hydration：
-
-- HTML 流式到达时，Suspense 边界可以独立 hydrate；
-- 用户在某个 Suspense 边界内交互时，React 优先 hydrate 该边界；
-- 更高优先级更新可以打断尚未完成 hydrate 的子树。
-
-这意味着首屏不必等所有 JS 加载完，用户点击已经流到的区域即可触发响应。
+Streaming 让 Suspense 边界可以独立完成 hydration。用户与尚未 hydrate 的边界交互时，React 会提高该边界的优先级，使相关 Client Component 尽快可用。页面不必等待所有客户端 JavaScript 就绪后再开始 hydration。
 
 ### Hydration mismatch
 
-服务端输出与客户端首次 render 不一致时，会出现 Hydration mismatch。React 会尝试恢复，但需要丢弃或修正节点，既影响性能，也可能造成闪烁。
+Hydration 期间，React 预期的 Host Component 和文本必须与服务端 HTML 生成的 DOM 一致，否则会出现 hydration mismatch。React 可以从部分错误中恢复，但修复过程可能增加开销并造成界面闪烁。
 
 常见原因：
 
-- 服务端渲染时直接读取 `window`、`document`、`localStorage`；
+- 根据 `window`、`document` 或 `localStorage` 条件渲染不同内容；
 - 模板中使用 `Math.random()`、当前时间等非确定值；
 - 服务端和浏览器的时区、语言环境不同；
 - HTML 标签嵌套非法，被浏览器解析器自动修正；
@@ -294,51 +230,39 @@ React 18+ 在 Streaming SSR 下提供选择性 Hydration：
 
 需要浏览器环境的逻辑应放进 `useEffect`：
 
-```tsx
+```tsx fold title="components/viewport-width.tsx"
 'use client'
 
 import { useEffect, useState } from 'react'
 
 export function ViewportWidth() {
-  const [width, setWidth] = useState<number>()
+  const [width, setWidth] = useState<number | null>(null)
 
   useEffect(() => {
     setWidth(window.innerWidth)
   }, [])
 
-  return <p>{width ? `视口宽度：${width}` : '正在读取视口信息'}</p>
+  return <p>{width === null ? '正在读取视口信息' : `视口宽度：${width}`}</p>
 }
 ```
 
 对于明确且不可避免的差异（如时间戳），可以使用 `suppressHydrationWarning`：
 
-```tsx
+```tsx fold
 <time dateTime={post.publishedAt} suppressHydrationWarning>
   {new Date(post.publishedAt).toLocaleString()}
 </time>
 ```
 
-`suppressHydrationWarning` 只能压制警告，不能替代正确的数据和环境设计。
-
-### SSR 期间的 hooks 与浏览器 API 边界
-
-Server Component 没有生命周期：它只在请求期间执行一次，不挂载 DOM、不重新渲染，所有 React Hook 不可用：
-
-- 不能 `useState` / `useReducer`：服务端没有响应式状态；
-- 不能 `useEffect` / `useLayoutEffect`：服务端没有挂载与副作用执行时机；
-- 不能 `useRef` / `useContext`：Server Component 不支持 context；
-- 没有事件处理器；
-- 不能访问浏览器 API（`window`、`document`、`localStorage`、`Canvas`、`WebSocket` 等）。
-
-Client Component 在 SSR 期间会执行 render 函数，但 hooks 行为与纯客户端不同：
-
-- `useState` 的初始值在服务端和客户端各求值一次，两次结果不一致会触发 Hydration mismatch；
-- `useEffect` / `useLayoutEffect` 在服务端不执行，只在客户端 Hydration 后才运行；
-- 浏览器 API 在服务端 render 时不可用，应放进 `useEffect` 或事件处理器。
-
-服务端渲染期间 React 默认跳过不必要的订阅追踪——当前请求只需要输出一次结果，没有重新订阅的场景。
+`suppressHydrationWarning` 只作用于当前元素的一层内容，也不会修正不一致的文本。它适合处理少量无法避免的差异，不能替代一致的初始数据和渲染逻辑。
 
 ## Server Component 与 Client Component 边界
+
+### 执行环境
+
+Server Component 可以在构建期或请求期执行，但不会进入浏览器。它可以使用 `async` / `await` 获取数据，不能使用客户端状态、副作用、事件处理器或浏览器 API。
+
+Client Component 会参与初始 HTML 的服务端预渲染，再在浏览器中完成 hydration。`useEffect`、`useLayoutEffect` 和浏览器 API 只能在客户端使用；首次渲染依赖的数据必须在服务端与浏览器之间保持一致。
 
 ### 两份构建产物
 
@@ -353,11 +277,11 @@ Next.js 一次构建会产出两类 bundle：
 
 App Router 下组件分三类：
 
-| 类型 | 服务端生成 HTML | 进入客户端 bundle | Hydration | 典型用途 |
-|---|---|---|---|---|
-| Server Component（默认） | 是 | 否 | 否 | 数据获取、静态结构、SEO 内容 |
-| Client Component（`'use client'`） | 是 | 是 | 是 | 交互、状态、浏览器 API |
-| 共享组件（仅 props 透传） | 是 | 是 | 否 | 跨边界复用 |
+| 类型                               | 服务端生成 HTML | 进入客户端 bundle | Hydration | 典型用途                     |
+| ---------------------------------- | --------------- | ----------------- | --------- | ---------------------------- |
+| Server Component（默认）           | 是              | 否                | 否        | 数据获取、静态结构、SEO 内容 |
+| Client Component（`'use client'`） | 是              | 是                | 是        | 交互、状态、浏览器 API       |
+| 共享组件（仅 props 透传）          | 是              | 是                | 否        | 跨边界复用                   |
 
 `'use client'` 是模块图边界。一旦某个文件标记了 `'use client'`，它和它直接 import 的所有模块都会进入客户端 bundle；它接收的 props 可以来自 Server Component，但这些 props 会被序列化进 RSC payload。
 
@@ -482,11 +406,11 @@ Next.js 16 默认开启 Cache Components，覆盖 **SSG / ISR / SSR / CSR** 四�
 
 ### 三类渲染时机
 
-| 渲染时机 | 何时执行 | 数据来源 | 失效方式 |
-|---|---|---|---|
-| 静态（Static） | 构建期 | 编译时已确定的输入 | 重新构建部署 |
-| 缓存（Cached） | 构建期或首次请求，缓存到 `cacheLife` 过期 | 任意 async 工作 | 时间过期 / `revalidateTag` 主动失效 |
-| 动态（Dynamic） | 每次请求 | `cookies()` / `headers()` / `searchParams` / 未缓存的 `fetch` | 不缓存 |
+| 渲染时机        | 何时执行                                  | 数据来源                                                      | 失效方式                            |
+| --------------- | ----------------------------------------- | ------------------------------------------------------------- | ----------------------------------- |
+| 静态（Static）  | 构建期                                    | 编译时已确定的输入                                            | 重新构建部署                        |
+| 缓存（Cached）  | 构建期或首次请求，缓存到 `cacheLife` 过期 | 任意 async 工作                                               | 时间过期 / `revalidateTag` 主动失效 |
+| 动态（Dynamic） | 每次请求                                  | `cookies()` / `headers()` / `searchParams` / 未缓存的 `fetch` | 不缓存                              |
 
 PPR（Partial Prerendering）是 Cache Components 的默认行为：构建期生成静态壳，请求期把动态片段按 Suspense 边界流式拼到同一份响应里。「PPR 模式」不是一个独立选项，而是这套机制的默认运行方式。
 
@@ -587,11 +511,7 @@ export async function generateStaticParams() {
   return posts.map((post) => ({ slug: post.slug }))
 }
 
-export default async function Page({
-  params,
-}: {
-  params: Promise<{ slug: string }>
-}) {
+export default async function Page({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params
   const post = await getPost(slug)
   return <article>{post.title}</article>
@@ -604,12 +524,12 @@ export default async function Page({
 
 `page.tsx` / `layout.tsx` 等文件里可以导出的少量路由级配置。这些选项主要与部署和动态参数控制相关，不影响渲染时机：
 
-| 配置 | 用途 |
-|---|---|
-| `dynamicParams` | 控制 `generateStaticParams` 未覆盖的动态参数是否允许运行时渲染 |
-| `runtime` | 选择 `'nodejs'` 或 `'edge'` 运行时 |
-| `preferredRegion` | 提示首选部署区域 |
-| `maxDuration` | Server Action / Route Handler 的最长执行时间 |
+| 配置              | 用途                                                           |
+| ----------------- | -------------------------------------------------------------- |
+| `dynamicParams`   | 控制 `generateStaticParams` 未覆盖的动态参数是否允许运行时渲染 |
+| `runtime`         | 选择 `'nodejs'` 或 `'edge'` 运行时                             |
+| `preferredRegion` | 提示首选部署区域                                               |
+| `maxDuration`     | Server Action / Route Handler 的最长执行时间                   |
 
 渲染时机本身不再需要额外声明，由组件使用的 API 决定。
 
@@ -999,23 +919,23 @@ export function ViewCount({ id }: { id: string }) {
 
 ### 路由维度
 
-| 场景 | 渲染模式 |
-|---|---|
-| 内容构建期确定且可枚举 | Static（`generateStaticParams` 列出全部样本） |
-| 内容公共但会定期更新 | Cached（`use cache` + `cacheLife`） |
-| 内容依赖请求身份或实时数据 | Dynamic（runtime API 或未缓存 fetch） |
-| 公共壳 + 个性化片段 | PPR 默认（静态壳 + Suspense 隔离动态） |
-| 不要求 SEO 的重交互后台 | 局部 CSR（`'use client'` 或 `dynamic({ ssr: false })`） |
+| 场景                       | 渲染模式                                                |
+| -------------------------- | ------------------------------------------------------- |
+| 内容构建期确定且可枚举     | Static（`generateStaticParams` 列出全部样本）           |
+| 内容公共但会定期更新       | Cached（`use cache` + `cacheLife`）                     |
+| 内容依赖请求身份或实时数据 | Dynamic（runtime API 或未缓存 fetch）                   |
+| 公共壳 + 个性化片段        | PPR 默认（静态壳 + Suspense 隔离动态）                  |
+| 不要求 SEO 的重交互后台    | 局部 CSR（`'use client'` 或 `dynamic({ ssr: false })`） |
 
 ### 组件维度
 
-| 场景 | 组件类型 |
-|---|---|
-| 数据获取、静态结构、SEO 内容 | Server Component（默认） |
-| 状态、事件处理、浏览器 API | Client Component（`'use client'`） |
+| 场景                                       | 组件类型                                                  |
+| ------------------------------------------ | --------------------------------------------------------- |
+| 数据获取、静态结构、SEO 内容               | Server Component（默认）                                  |
+| 状态、事件处理、浏览器 API                 | Client Component（`'use client'`）                        |
 | 强依赖 `window` / `document`，无服务端降级 | 隔离为 Client Component，必要时 `dynamic({ ssr: false })` |
-| 表单与服务端变更 | Server Action + `<form action>` |
-| Provider、Context | 包成 Client Component 后在 Server Component 中透传 |
+| 表单与服务端变更                           | Server Action + `<form action>`                           |
+| Provider、Context                          | 包成 Client Component 后在 Server Component 中透传        |
 
 ### 组合实践
 
