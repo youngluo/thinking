@@ -55,10 +55,10 @@ const d2PreRenderOptions: D2PreRenderOptions = {
   prelude: `
   classes: {
     group: {
-      style.fill: "#fffaf0"
+      style.fill: "#FCF8F2"
     }
     subgroup: {
-      style.fill: "#fffdf7"
+      style.fill: "#FFFDF9"
     }
     fail: {
       style.fill: "#ffcdd2"
@@ -67,7 +67,7 @@ const d2PreRenderOptions: D2PreRenderOptions = {
       style.fill: "#c8e6c9"
     }
     decision: {
-      style.fill: "#e1bee7"
+      style.fill: "#E5CFF0"
     }
   }
 
