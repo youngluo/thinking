@@ -5,294 +5,153 @@ order: 1
 
 # Harness Engineering 是什么
 
-理解 Agent 系统的关键，不在于 LLM 有多强，而在于包裹它的那套基础设施，也就是 Harness。这篇文章聊聊我对 Harness Engineering 的理解，从核心概念到六大组件，再到落地时常见的五个卡点。
+模型提供 Agent 所需的推理能力，Harness 决定这些能力如何进入真实执行过程。理解 Harness，关键要看它解决了哪些问题、如何组织 Agent 运行，以及怎样控制执行边界。
 
 ## 核心概念
 
-用一句话来描述：**Harness Engineering = 包裹 LLM 的运行时基础设施**。
-
-LLM 本身只是个推理引擎，给它一个 prompt，它返回一段文字，仅此而已。但一个真正能做事的 Agent，需要工具调度、上下文管理、状态持久化、权限控制……这些 LLM 负责不了，全靠 Harness 来兜底。
-
 :::tip Agent = Model + Harness
-Harness 的任务就是：在正确的时间为给定的任务提供正确的上下文。
+Harness Engineering = 包裹 LLM 的运行时基础设施
 :::
 
-```mermaid
-%%{init: {'themeVariables': {'lineColor': '#7fa3ff'}}}%%
-graph LR
-    subgraph U ["你"]
-        A1["输入意图 / 审批权限 / 观察结果"]
-    end
+这里的“运行时基础设施”采用广义定义，覆盖任务编排、上下文与状态管理、工具执行、安全控制、观测与验证。LLM 负责理解任务和生成决策，Harness 负责组织执行并控制边界。
 
-    subgraph H ["Harness Engineering"]
-        B1["Agentic Loop"]
-        B2["Tools"]
-        B6["Permissions"]
-        B3["Context"]
-        B4["Memory"]
-        B5["Hooks"]
-    end
+从每轮模型调用的角度看，Harness 的任务就是：在正确的时间为给定的任务提供正确的上下文。这里的“上下文”不只是对话历史，还包括任务目标、系统指令、当前状态、可用工具、权限边界和工具执行结果。Harness 根据任务进展更新这些信息，并在每次模型调用前选择当前需要的部分。
 
-    subgraph L ["LLM"]
-        C1["只负责推理决策，其余全是 Harness 的事"]
-    end
+## 为什么需要 Harness
 
-    U -.-> H
-    H -.-> L
+一次模型调用只能基于当前输入生成结果，真实任务却往往需要持续行动：读取数据、调用外部系统、处理失败，并根据执行结果调整下一步。工具由谁执行、上下文如何更新、危险操作是否允许、结果是否满足目标，都需要模型之外的系统负责。
 
-    style U fill:#7fa3ff29,stroke:#07f,stroke-width:1px,rx:4,ry:4
-    style A1 fill:none,stroke:none,font-size:13px
-    style H fill:#fffaf0,stroke:#ffa500,stroke-width:2px,stroke-dasharray:5,5,rx:4,ry:4
-    style L fill:#7fa3ff29,stroke:#07f,stroke-width:1px,rx:4,ry:4
-    style C1 fill:none,stroke:none,font-size:13px
-    style B1 fill:#ffe0b2,stroke:#bf360c,stroke-width:1px,rx:4,ry:4
-    style B2 fill:#bbdefb,stroke:#0d47a1,stroke-width:1px,rx:4,ry:4
-    style B3 fill:#c8e6c9,stroke:#1b5e20,stroke-width:1px,rx:4,ry:4
-    style B4 fill:#e1bee7,stroke:#4a148c,stroke-width:1px,rx:4,ry:4
-    style B5 fill:#b2ebf2,stroke:#006064,stroke-width:1px,rx:4,ry:4
-    style B6 fill:#ffcdd2,stroke:#b71c1c,stroke-width:1px,rx:4,ry:4
+这些问题可以归纳为五类：
+
+| 问题           | Harness 的作用                         |
+| -------------- | -------------------------------------- |
+| 任务失控       | 设置停止条件、轮次、超时和预算         |
+| 上下文丢失     | 管理上下文、任务状态和持久化信息       |
+| 工具产生副作用 | 校验权限，并限制工具的执行环境         |
+| 结果无法验证   | 运行测试、规则校验、模型评审或人工审核 |
+| 过程不透明     | 记录执行轨迹、延迟、错误和 token 消耗  |
+
+简单问答或步骤固定的工作流不一定需要完整的 Harness。只有当任务需要根据中间结果动态决策，并持续调用工具时，这些能力才会逐渐成为必要条件。
+
+## Harness 如何驱动 Agent
+
+Harness 把一次任务组织成持续运行的闭环：模型负责生成响应，Harness 负责组装上下文、分流响应、执行工具并更新状态，再根据验证结果和停止条件决定继续还是结束。
+
+```d2 maxHeight=500
+direction: down
+
+A: 任务输入
+B: Agentic Loop {
+  class: group
+  direction: down
+
+  context: 上下文组装
+  model: 模型推理
+  route: 响应路由 {
+    shape: diamond
+    class: decision
+  }
+  check: 工具调用校验 {
+    shape: diamond
+    class: decision
+  }
+  execute: 受控工具执行
+  verify: 结果验证 {
+    shape: diamond
+    class: decision
+  }
+  next: 观测回注与状态更新
+  stop: 终止条件检查 {
+    shape: diamond
+    class: decision
+  }
+
+  context -> model -> route
+  route -> check: 工具调用
+  check -> execute: 校验通过
+  check -> next: 校验失败
+  execute -> next: 工具结果
+  route -> verify: 候选结果
+  verify -> next: 验证失败
+  next -> stop
+  stop -> context: 继续
+}
+C: 结果输出
+D: 任务终止
+
+A -> B.context
+B.verify -> C: 验证通过
+B.stop -> D: 终止
 ```
 
-把 Harness 想象成一个"外骨骼"会更直观：LLM 是里面的大脑，负责推理和判断；Harness 是让大脑能够行动、记忆、与外界交互的整套系统。去掉 Harness，LLM 只是个聊天窗口；加上 Harness，它才能成为真正干活的 Agent。
+这条链路不要求每一步都由模型判断。权限、超时、预算和结果校验通常更适合由确定性规则控制；只有需要理解语义或权衡方案时，才交给模型处理。
 
-## Harness 六大核心组件
+## Harness 的五类核心能力
 
-Harness 的职责可以拆成六块，每一块都解决一个具体问题：
+Harness 没有统一的组件清单。按照任务执行链路，可以把它的职责概括为五类：
 
-| 组件         | 职责                                    | 不做会怎样                         |
-| ------------ | --------------------------------------- | ---------------------------------- |
-| Agentic Loop | 推理 → 工具 → 回注 → 继续推理的核心循环 | 模型只能回答一次，无法完成复杂任务 |
-| 工具系统     | Read/Write/Bash/Grep 等原子操作         | 模型只会说，不会做                 |
-| 权限控制     | allow/deny/ask 细粒度管控危险操作       | 无法阻止 Agent 执行破坏性操作      |
-| 上下文管理   | 自动压缩 + 关键信息重注入               | 长任务 token 爆炸或遗忘关键信息    |
-| 状态持久化   | 对话历史、工具结果、跨会话记忆          | 断线重连后从头开始                 |
-| 事件钩子     | 工具执行前后的自动化拦截                | 无法实现自动校验、自动通知         |
+| 能力               | 需要回答的问题                       |
+| ------------------ | ------------------------------------ |
+| 任务编排与生命周期 | 任务如何开始、继续、暂停和结束       |
+| 工具与执行环境     | 模型如何行动，副作用发生在哪里       |
+| 上下文与状态管理   | 每一轮需要给模型哪些信息             |
+| 权限与安全边界     | 哪些操作可以执行，最大影响范围是什么 |
+| 观测与结果验证     | 如何知道执行了什么，任务是否真的完成 |
 
-### Agentic Loop
+### 任务编排与生命周期
 
-这是整个 Harness 的心脏。没有 Loop，模型就是一问一答；有了 Loop，模型才能持续推理、反复行动，直到任务完成。
+Agentic Loop 是 Harness 的核心运行机制：模型生成决策，Harness 执行工具并回注结果，模型再根据新信息决定下一步。循环让 Agent 能够处理无法通过一次模型调用完成的任务。
 
-```mermaid
-%%{init: {'themeVariables': {'lineColor': '#7fa3ff'}}}%%
-flowchart LR
-    A[开始]:::start
+循环必须同时定义退出条件。任务完成、达到最大轮次、超时、预算耗尽、连续失败或用户取消，都可能终止执行。对于复杂任务，Harness 还需要拆分任务、记录进度，并在暂停或失败后恢复到可继续的位置。
 
-    subgraph LOOP[核心循环]
-        B[接收输入（prompt + 上下文）]:::step1
-        C[LLM 推理 → 生成响应/工具调用]:::step2
-        D[执行工具 → 收集结果]:::step3
-        E{检查是否完成}:::decision
-    end
+“模型决定停止”与“任务已经完成”不是一回事。是否完成可以由模型判断，也可以由测试结果、业务规则、外部评估器或人工审批决定。
 
-    F[结束]:::complete
+### 工具与执行环境
 
-    A --> B
-    B -.-> C
-    C -.-> D
-    D -.-> E
-
-    E -. 未完成 .-> B
-    E -- 完成 --> F
-
-    style LOOP fill:#fffaf0,stroke:#ffa500,stroke-width:2px,stroke-dasharray:5,5,rx:4,ry:4
-    style A fill:#7fa3ff29,stroke:#07f,stroke-width:1px,rx:4,ry:4
-    style B fill:#ffe0b2,stroke:#bf360c,stroke-width:1px,rx:4,ry:4
-    style C fill:#bbdefb,stroke:#0d47a1,stroke-width:1px,rx:4,ry:4
-    style D fill:#c8e6c9,stroke:#1b5e20,stroke-width:1px,rx:4,ry:4
-    style E fill:#e1bee7,stroke:#4a148c,stroke-width:1px,rx:4,ry:4
-    style F fill:#7fa3ff29,stroke:#07f,stroke-width:1px,rx:4,ry:4
-```
+工具把模型的决策转换成外部动作。一个完整的工具通常包含名称、用途、输入结构、执行逻辑和标准化结果。模型生成工具调用请求，Harness 负责实际执行、错误处理和结果返回。
 
-Loop 的逻辑很简单：模型推理 → 调用工具 → 结果回注 → 继续推理，周而复始，直到任务完成或达到最大轮次上限。"检查是否完成"这一步通常也是模型自己判断的，它读到足够的信息后，决定停下来给出最终答案。
+工具设计适合从少量、边界清晰的原子能力开始，再按任务组合。工具数量过多会增加选择成本；能力过于宽泛，又会放大误操作的影响。
 
-### 工具系统（Tools）
+工具能否完成任务还取决于执行环境。文件范围、网络访问、凭据、超时、资源配额和隔离方式共同决定了工具真正拥有的能力。对具有副作用的操作，还要处理重试和幂等性，避免重复执行放大影响。
 
-工具是 Agent 的手脚。没有工具，模型只能输出文字，无法真正改变任何东西。
+### 上下文与状态管理
 
-Harness 的工具设计有一个我很欣赏的哲学：**少而精，靠组合涌现能力**，而不是为每个场景单独造一个工具。
+上下文窗口有限，工具结果和对话历史却会持续增长。Harness 需要选择当前真正有用的信息，而不是把所有历史都塞给模型。
 
-5 类原子操作基本覆盖一切：
+Context、State 和 Memory 解决的是不同问题：
 
-| 操作                 | 工具                      |
-| -------------------- | ------------------------- |
-| 读 (Read)            | Read / Glob / Grep        |
-| 写 (Write)           | Write / Edit              |
-| 执行 (Execute)       | Bash（图灵完备）          |
-| 联网 (Web)           | WebFetch / WebSearch      |
-| 编排 (Orchestration) | Agent / TodoWrite / Skill |
+| 概念    | 含义                                   |
+| ------- | -------------------------------------- |
+| Context | 当前一次模型调用实际接收到的信息       |
+| State   | 任务进度、工具结果和等待审批等运行状态 |
+| Memory  | 可跨轮次或跨会话保留，并按需取回的信息 |
 
-遇到复杂场景怎么办？组合就够了：
+常见策略包括裁剪无关内容、压缩早期历史、检索相关信息，以及把进度写入外部存储。压缩会损失细节，因此 Harness 只能尽量保留关键约束，不能保证所有重要信息始终留在上下文中。
 
-| 场景             | 组合方式           |
-| ---------------- | ------------------ |
-| 没有"重构工具"？ | Read + Edit + Bash |
-| 没有"测试工具"？ | Bash + Read        |
-| 没有"部署工具"？ | Bash               |
+### 权限与安全边界
 
-:::tip
-正如计算机只需几条基础指令就能图灵完备，Harness 只需确保基础工具的组合空间足够大，就能应对任何复杂场景。
-:::
+工具让 Agent 能够行动，也让错误决策产生真实副作用。Harness 需要在执行前判断操作是自动允许、需要人工审批，还是直接拒绝。
 
-Bash 在这里是终极后手，图灵完备意味着任何可以程序化的操作都能搞定。当然，能力越大责任越大，Bash 也是最需要权限管控的工具。
+权限控制只解决“能不能执行”，不能单独保证安全。执行环境还需要限制文件、网络、凭据和系统资源的访问范围，并保留审计记录。即使模型或权限判断出错，沙箱和资源隔离也应限制操作的最大影响范围。
 
-### 权限控制（Permissions）
+模型输入和输出也需要经过校验，以降低提示词注入、敏感信息泄露和越权请求等风险。Harness 还应遵循最小权限原则：默认只开放完成当前任务所需的能力，风险越高的操作，审批和隔离越严格。
 
-做 Agent 系统会遇到一个根本矛盾：**希望 Agent 足够自主来提效，又担心它失控造成损失**。
+### 观测与结果验证
 
-权限控制的价值就在于：**在安全的边界内，给 Agent 最大程度的自主**。
+Agent 的执行过程是动态的，只看最终回答很难定位失败发生在哪一轮。Harness 需要记录模型请求、工具调用、错误、重试、延迟和 token 消耗，形成可追踪的执行轨迹。
 
-三级权限模型：
+观测说明“发生了什么”，验证判断“结果是否正确”。验证方式可以是测试、规则检查、模型评审或人工审核，应根据任务风险选择。执行结束只是生命周期状态，只有通过验收条件，任务才算完成。
 
-| 权限等级 | 含义 | 效果                     | 设计思路           |
-| -------- | ---- | ------------------------ | ------------------ |
-| allow    | 允许 | 自动执行，无需审批       | 授予信任，保障流畅 |
-| ask      | 询问 | 暂停，等待用户确认后继续 | 重要操作，人工把关 |
-| deny     | 禁止 | 完全拒绝，直接告知模型   | 设置红线，绝对安全 |
+对于不需要模型判断但必须执行的步骤，可以使用事件钩子在工具执行前后触发校验、格式化、审计或通知。钩子是确定性自动化的一种实现方式，不是 Harness 必须具备的固定组件。
 
-以 Bash 为例，精细到命令级别的控制：
+## Harness 的设计原则
 
-| 类型     | 示例                               |
-| -------- | ---------------------------------- |
-| allow    | `['npm test', 'npm run lint']`     |
-| deny     | `['rm -rf', 'curl \| sh', 'sudo']` |
-| 其余操作 | 自动归为 ask，等用户确认           |
+- 上下文不是越多越好，只提供当前决策需要的信息；
+- 工具从边界清晰的原子能力开始，明确输入、输出和副作用；
+- 关键约束尽量由权限、沙箱和验证器执行，不只依赖提示词；
+- 停止条件与验收条件分开设计，不能把 Agent 停止当作任务完成；
+- 从满足任务的最小 Harness 开始，只在出现明确需求或风险时增加复杂度。
 
-:::danger 核心原则
-默认禁止，按需允许。
-:::
+## 总结
 
-决策流程：
-
-```mermaid
-%%{init: {'themeVariables': {'lineColor': '#7fa3ff'}}}%%
-graph LR
-    A[模型请求: Bash 'rm -rf']
-    B[检查权限配置]
-    C{匹配哪一级权限?}
-    D[自动执行]
-    E[暂停，等待用户审批]
-    F[直接拒绝并告知模型]
-    G[返回结果]
-    H[用户决定<br>（允许/拒绝）]
-    I[流程终止]
-
-    A --> B --> C
-    C -->|allow| D --> G
-    C -->|ask| E --> H
-    C -->|deny| F --> I
-
-    style A fill:#7fa3ff29,stroke:#07f,stroke-width:1px,rx:4,ry:4
-    style B fill:#7fa3ff29,stroke:#07f,stroke-width:1px,rx:4,ry:4
-    style C fill:#e1bee7,stroke:#4a148c,stroke-width:1px,rx:4,ry:4
-    style D fill:#c8e6c9,stroke:#1b5e20,stroke-width:1px,rx:4,ry:4
-    style E fill:#ffe0b2,stroke:#bf360c,stroke-width:1px,rx:4,ry:4
-    style F fill:#ffcdd2,stroke:#b71c1c,stroke-width:1px,rx:4,ry:4
-    style G fill:#7fa3ff29,stroke:#07f,stroke-width:1px,rx:4,ry:4
-    style H fill:#7fa3ff29,stroke:#07f,stroke-width:1px,rx:4,ry:4
-    style I fill:#7fa3ff29,stroke:#07f,stroke-width:1px,rx:4,ry:4
-```
-
-权限控制的本质不是限制能力，而是明确边界，**能力越大，围栏越重要**。
-
-### 上下文管理（Context）
-
-这是 Agent 做长任务时绕不过去的工程难题。
-
-**问题**：模型的 token 窗口是有限的（比如 200K），但真实任务产生的对话历史会很快把它填满。读 20 个文件、搜索 50 次、执行 30 个命令，这些工具调用的输入输出加在一起，轻松超过几十万 tokens。
-
-**解法**：自动压缩 + 关键信息重注入。
-
-| 阶段       | 策略                                                                                  |
-| ---------- | ------------------------------------------------------------------------------------- |
-| 触发机制   | 对话历史达到 token 窗口约 92% 时自动触发（这是 Claude Code 的阈值，不同产品可能不同） |
-| 压缩策略   | 保留最近消息保持完整性，将早期消息压缩成摘要                                          |
-| 重注入内容 | CLAUDE.md、系统提示词、工具定义等关键配置                                             |
-
-压缩的核心取舍是：牺牲历史细节，换取继续执行的能力。Harness 保证无论对话多长，任务关键信息始终在窗口内。
-
-### 状态持久化（Memory）
-
-Context 解决的是"当前会话内记得住"，Memory 解决的是"下次还记得"。
-
-两者的区别很清晰：
-
-| 概念    | 定义                 | 特性               |
-| ------- | -------------------- | ------------------ |
-| Context | 一次会话内的工作记忆 | 临时性、会话内有效 |
-| Memory  | 跨会话的长期记忆     | 持久性、跨会话保留 |
-
-Memory 又分两种写法：
-
-| 类型                           | 说明                                                                            |
-| ------------------------------ | ------------------------------------------------------------------------------- |
-| **显式记忆**（用户主动写入）   | CLAUDE.md（项目级规则）、Skills/Hooks 配置，每次会话自动加载，压缩后重注入      |
-| **隐式记忆**（Agent 自动存储） | 存储在 `~/.claude/` 下的项目记忆目录，包含用户偏好、操作反馈，跨项目/会话持久化 |
-
-我自己的理解是：CLAUDE.md 像使命宣言，告诉 Agent "你是谁、该怎么干"；隐式记忆像学习笔记，记录"这个用户喜欢什么、上次踩过什么坑"。两者合在一起，才构成完整的长期记忆体系。
-
-没有 Memory 的 Agent 每次对话都从零开始，无法积累经验，用起来很割裂。
-
-### 事件钩子（Hooks）
-
-Hooks 是 Harness 里我觉得最"工程味"的设计，它把那些**不需要模型思考、但必须做的事**从推理链路里剥离出来，用确定性的自动化来完成。
-
-**本质**：事件驱动的自动化拦截，在工具执行的前后触发，不经过模型推理。
-
-四个钩子覆盖了主要时机：
-
-| 钩子                     | 作用                     |
-| ------------------------ | ------------------------ |
-| PreToolUse（执行前）     | 拦截、修改或阻止工具调用 |
-| PostToolUse（执行后）    | 校验结果、执行审计       |
-| Notification（通知事件） | 发送告警、记录日志       |
-| Stop（Agent 结束时）     | 执行清理、生成汇报       |
-
-Hooks 和 Tools 的根本区别：
-
-| 特性       | Tools              | Hooks                        |
-| ---------- | ------------------ | ---------------------------- |
-| 调用方式   | 模型主动决策后调用 | 自动触发，不经过模型推理     |
-| token 消耗 | 消耗推理 token     | 确定性操作，不消耗推理 token |
-
-典型场景：
-
-- 代码保存前自动格式化（prettier）
-- 代码提交前自动 lint
-- 生成文件后自动跑测试
-- 修改配置后自动校验
-
-一个完整的事件流长这样：
-
-```mermaid
-%%{init: {'themeVariables': {'lineColor': '#7fa3ff'}}}%%
-flowchart LR
-    A[模型请求：Edit file.ts]
-    B[PreToolUse Hook<br>执行前拦截]
-    C[检查目标文件是否为敏感文件]
-    D[确认安全后放行]
-    E[执行工具：Edit]
-    F[PostToolUse Hook<br>执行后处理]
-    G[自动调用 prettier 格式化文件]
-
-    A --> B --> C --> D --> E --> F --> G
-
-    style A fill:#7fa3ff29,stroke:#07f,stroke-width:1px,rx:4,ry:4
-    style B fill:#ffe0b2,stroke:#bf360c,stroke-width:1px,rx:4,ry:4
-    style C fill:#bbdefb,stroke:#0d47a1,stroke-width:1px,rx:4,ry:4
-    style D fill:#c8e6c9,stroke:#1b5e20,stroke-width:1px,rx:4,ry:4
-    style E fill:#7fa3ff29,stroke:#07f,stroke-width:1px,rx:4,ry:4
-    style F fill:#b2ebf2,stroke:#006064,stroke-width:1px,rx:4,ry:4
-    style G fill:#c8e6c9,stroke:#1b5e20,stroke-width:1px,rx:4,ry:4
-```
-
-## Harness 解决的五个 AI 落地卡点
-
-这六个组件不是凭空设计的，背后都在解决 Agent 落地时真实遇到的问题：
-
-| 问题                                 | 解决方法                    |
-| ------------------------------------ | --------------------------- |
-| 无限循环（Agent 陷入死循环烧 token） | max_turns 限制 + 循环检测   |
-| 上下文爆炸（长任务超出窗口）         | 自动压缩 + 关键信息重注入   |
-| 权限失控（Agent 执行危险操作）       | allow/deny/ask 细粒度管控   |
-| 质量不可控（输出质量参差不齐）       | Hooks 自动校验 + 审核 Agent |
-| 成本不透明（token 消耗无感知）       | 实时计量 + 用量可观测       |
+Harness Engineering 将模型的推理能力组织成一条可持续执行的工程链路。模型负责处理不确定的理解与决策，Harness 负责提供上下文和工具，并用确定性机制控制执行边界、维护状态和验证结果。

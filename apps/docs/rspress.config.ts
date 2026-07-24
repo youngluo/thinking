@@ -23,7 +23,6 @@ import {
 } from './utils'
 import { pluginRoutePathRewrite } from './plugins/routePathRewrite'
 import { pluginImageZoom } from './plugins/imageZoom'
-import { pluginHtmlMinifier } from './plugins/htmlMinifier'
 import { createSeoConfig } from './config/seo'
 
 const CONFIG_DIR = dirname(fileURLToPath(import.meta.url))
@@ -55,7 +54,7 @@ const d2PreRenderOptions: D2PreRenderOptions = {
   prelude: `
   classes: {
     group: {
-      style.fill: "#FCF8F2"
+      style.fill: "#FEFAF1"
     }
     subgroup: {
       style.fill: "#FFFDF9"
@@ -141,7 +140,7 @@ export default defineConfig({
     // lastUpdated: true,
   },
   builderConfig: {
-    plugins: [pluginNodePolyfill(), ...(IS_PROD ? [pluginHtmlMinifier()] : [])],
+    plugins: [pluginNodePolyfill()],
     source: {
       define: {
         'process.env.DOCS_GISCUS_REPO': JSON.stringify(
