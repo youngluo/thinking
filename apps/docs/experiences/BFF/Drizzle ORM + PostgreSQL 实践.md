@@ -5,17 +5,31 @@ draft: true
 
 # Drizzle ORM + PostgreSQL 实践
 
-本文演示 Drizzle ORM 0.45 与 Postgres.js 3.4 在 Node BFF 中的最小可用链路：定义 Schema、生成迁移、跑 CRUD，再串到 Hono 路由上。
+BFF 接到真实的 PostgreSQL，最朴素的方式是手写参数化 SQL，类型靠手维护、改字段靠 review。Drizzle 走的是中间路线：query builder 几乎就是 SQL，但能从 Schema 推类型，并配套 `drizzle-kit` 管迁移。下面把它从选型思路、装包、定义 Schema，到生成迁移、跑 CRUD 串一遍。
 
 ## 认识 Drizzle ORM
 
-Drizzle 把表、字段和约束写成普通 TS 对象，`insert` / `select` / `update` / `delete` 返回的链式构造器带有 Schema 推导出的字段类型，写错的列名或类型在编译期就会报错。链式 API 贴近 SQL，读 `.from(users).where(eq(users.id, 1))` 几乎等于读 `SELECT * FROM users WHERE id = 1`。
+Drizzle 把表、字段和约束写成普通 TS 对象，`insert` / `select` / `update` / `delete` 返回链式构造器，写错的列名或类型在编译期就会报错：
 
-Drizzle 自身不连数据库，需要配合驱动使用。PostgreSQL 场景下本文使用 Postgres.js（包名 `postgres`），Drizzle 适配器是 `drizzle-orm/postgres-js`。Postgres.js 自带连接管理，类型随包发布，不需要 `@types/pg`。
+```ts
+db.select().from(users).where(eq(users.id, 1))
+```
 
-开发期的迁移生成、`migrate` 执行和 `studio` 数据浏览由独立的 `drizzle-kit` 提供，与运行时查询分开。
+可读性与参数化 SQL 几乎一致，但「写错列名」这件事 IDE 和 TS 帮你先拦一轮。Drizzle 自身不连数据库，迁移生成、执行和数据浏览由独立的 `drizzle-kit` 提供，运行时不加载。版本基线：Drizzle ORM `0.45.x`、Drizzle Kit `0.31.x`。
 
-> 版本：Drizzle ORM `0.45.x`、Drizzle Kit `0.31.x`、`postgres` `3.4.x`、Hono `4.12.x`。`drizzle-kit` 和 `drizzle-orm` 是两个独立包，前者只在开发和 CI 中使用。
+## 认识 PostgreSQL
+
+PostgreSQL 在 Node 项目里几乎是默认选择——事务、外键、视图、触发器开箱即用，并通过扩展提供 JSONB、全文检索、地理空间等能力。日常会用到的主要特性：
+
+- 身份列：`SERIAL` 或 PostgreSQL 10+ 推荐的 `GENERATED ALWAYS AS IDENTITY`；
+- 时间类型：`TIMESTAMP` 与 `TIMESTAMP WITH TIME ZONE`，业务时间统一按 UTC 存；
+- `ENUM` 与 `JSONB`：`ENUM` 限定取值，`JSONB` 存半结构化数据并支持索引；
+- 索引：`B-tree`（默认）、`Hash`、`GIN`（适合 JSONB / 数组）、`BRIN`（适合按时间或大范围连续数据）；
+- 外键与级联：`REFERENCES ... ON DELETE CASCADE`。
+
+Drizzle 通过 `drizzle-orm/pg-core` 暴露这些能力的字段构造器，`pgTable` 与 SQL 类型一一对应。
+
+> 本文示例在 PostgreSQL 14+ 上验证。Node 端的驱动本文用 Postgres.js（包名 `postgres`）：单包发布、自带连接池、prepared statement 自动复用、跨 Node / Bun / Workers 用同一份代码。版本基线 `3.4.x`。
 
 ## 初始化项目
 
@@ -24,48 +38,30 @@ pnpm add drizzle-orm postgres
 pnpm add -D drizzle-kit
 ```
 
-`drizzle-orm` 是运行时依赖，`drizzle-kit` 负责生成和执行迁移，`postgres` 是 PostgreSQL 驱动，类型随包发布，不需要 `@types/pg` 之类的额外类型包。
+`drizzle-orm` 是运行时依赖，`drizzle-kit` 仅在开发与 CI 中加载。
 
-加载环境变量时校验：
+### DATABASE_URL 怎么写
 
-```ts title="src/env.ts"
-import { z } from 'zod'
-
-const schema = z.object({
-  DATABASE_URL: z.string().min(1),
-})
-
-export const env = schema.parse(process.env)
-```
-
-### 连接串格式与安全
-
-`DATABASE_URL` 是 Postgres.js 在运行时解析的连接字符串，需要符合驱动可识别的格式：
+连接串不是占位字符串，是 Postgres.js 运行时实际解析的字段：
 
 ```text
 postgres://user:password@host:port/database?sslmode=require&schema=public
 ```
 
-要点：
+几个常踩的点：
 
-- `protocol` 写 `postgres://` 或 `postgresql://`，两者等价；漏写或写错协议，Postgres.js 在首次连接时报错。
-- `user` / `password` 不要直接写进仓库。本地用 `.env`，生产从部署平台的 Secret 读取。
-- 本地开发示例（不要提交到仓库）：
+- 协议头必须写 `postgres://` 或 `postgresql://`，漏一个冒号 Postgres.js 启动时报错；
+- 本地写进 `.env`，仓库只保留 `.env.example` 占位；
+- 托管服务（Neon、Supabase、RDS）默认要 TLS，查询串加 `sslmode=require` 或 `verify-full`；
+- 账号遵循最小权限：写账号、迁移账号、CI 只读账号分开。
 
-  ```text title=".env"
-  DATABASE_URL=postgres://postgres:postgres@localhost:5432/myapp
-  ```
+```text title=".env"
+DATABASE_URL=postgres://postgres:postgres@localhost:5432/myapp
+```
 
-  `.env` 加入 `.gitignore`；仓库保留 `.env.example`，值用占位符（如 `postgres://user:password@host:5432/db`），让协作者按本地情况替换。
+校验用 `z.string().min(1)` 而不是 `.url()`——Postgres.js 也支持 `user:pass@host/db` 这种关键字写法，直接 `.url()` 会把合法串挡掉。
 
-- 托管服务（Neon、Supabase、RDS 等）默认要求 TLS，查询串需要 `sslmode=require` 或 `verify-full`，否则连接被拒绝。
-- 数据库账号遵循最小权限：本地应用账号不必是超级用户，生产读写账号与迁移发布账号分开。
-- 生产不复用本地密码；CI / Serverless 用只读账号跑查询，写操作走单独的连接串或账号。
-- 可选 `application_name=myapp`，便于在 `pg_stat_activity` 中识别连接来源；`schema` 默认 `public`，多租户或多 Schema 时显式声明。
-
-校验使用 `z.string().min(1)` 而不是 `.url()`，因为 Postgres.js 也接受关键字形式（`user:password@host:port/db`）和简化形式（`host/db`），直接 `.url()` 会把合法写法挡掉。
-
-### 数据库客户端
+### 客户端与配置
 
 ```ts title="src/db/client.ts"
 import { drizzle } from 'drizzle-orm/postgres-js'
@@ -76,11 +72,7 @@ const client = postgres(env.DATABASE_URL, { max: 10 })
 export const db = drizzle(client)
 ```
 
-`postgres(url, options)` 返回的客户端自带连接池，连接数、超时等参数在选项中配置。Drizzle 只把查询转换为 SQL 并执行，不参与连接管理；`max: 10` 是示例值，Postgres.js 默认也是 10，生产应按 `max_connections` 与工作进程数估算。应用退出前调用 `await client.end()` 关闭连接。
-
-### Drizzle Kit 配置
-
-`drizzle.config.ts` 告诉 Drizzle Kit 去哪里找 Schema、迁移输出到哪个目录、目标数据库是什么：
+`max: 10` 是 Postgres.js 默认值，不是「少了就要出问题」。生产应该按 PostgreSQL `max_connections` 和 Pod 数估算：把 `(max_connections - 保留连接) / Pod 数` 当下限。应用退出前 `await client.end()` 释放连接，否则进程会被 SIGTERM 强杀。
 
 ```ts title="drizzle.config.ts"
 import { defineConfig } from 'drizzle-kit'
@@ -97,11 +89,11 @@ export default defineConfig({
 })
 ```
 
-`schema` 指向 Schema 文件，`out` 是迁移输出目录。`strict: true` 强制字段类型和默认值显式声明，避免静默漂移。
+`strict: true` 我推荐打开：字段类型和默认值不显式声明时会发警告，避免从 TS 类型推到数据库时悄悄漂移。
 
-## 定义数据表
+## 定义 Schema
 
-Drizzle 用 `pgTable` 把表结构写成普通 TS 对象，字段类型、约束和索引都通过链式调用描述：
+Schema 是 Drizzle 类型系统的入口。我习惯先写表体 + 索引，再写外键，最后导出 `$inferSelect` / `$inferInsert`：
 
 ```ts title="src/db/schema.ts"
 import { sql } from 'drizzle-orm'
@@ -133,14 +125,12 @@ export const posts = pgTable('posts', {
 })
 ```
 
-要点：
+几个我总会检查的点：
 
-- `serial('id')` 对应 PostgreSQL 的 `SERIAL`，等价于自增整数主键；新项目更推荐 `integer('id').generatedAlwaysAsIdentity()`，对应 PostgreSQL 10+ 的身份列；
-- `notNull()`、`default(sql\`now()\`)`、`references()` 把约束直接写进 Schema，迁移和类型推导会同时纳入；
-- 第二个参数是回调，用来声明索引和额外约束，命名加表名前缀（如 `users_email_idx`）便于排错；
-- 外键使用 `references(() => users.id)`，回调形式避免循环引用报错；`onDelete: 'cascade'` 在删除作者时连带删除其文章。
-
-Schema 上挂的 `$inferSelect` 与 `$inferInsert` 推导查询和写入类型：
+- **主键用 `serial` 还是 `generatedAlwaysAsIdentity`**：`SERIAL` 等价于自增整数主键；新项目我直接用 `integer('id').generatedAlwaysAsIdentity()`，对应 PostgreSQL 10+ 的身份列，迁移更顺；
+- **外键用回调形式**：`references(() => users.id)`。函数形式是为了避开循环引用——`posts` 引用 `users` 时如果直接写 `users.id`，某些写法会撞到解析顺序问题；
+- **索引命名带表名前缀**：`users_email_idx` 而不是 `email_idx`，查 `pg_stat_user_indexes` 排错时一眼能归属；
+- **`$inferSelect` / `$inferInsert` 抽到独立文件**（`src/db/types.ts`），服务层和路由统一引用，避免到处重写接口。
 
 ```ts title="src/db/types.ts"
 import { users, posts } from './schema'
@@ -151,40 +141,48 @@ export type Post = typeof posts.$inferSelect
 export type NewPost = typeof posts.$inferInsert
 ```
 
-`User` 是带 `id` 和 `createdAt` 的完整行；`NewUser` 是写入时可省略自动生成字段的类型。服务层和路由都可以使用它们，避免重复定义接口。
+`User` 是带 `id` 和 `createdAt` 的完整行，`NewUser` 是写入时可省略自动生成字段的类型。
 
 ## 同步数据库结构
 
-Drizzle Kit 把 Schema 转成可执行的迁移文件，流程是 `generate` 生成 SQL、`migrate` 在目标数据库执行、`studio` 提供本地数据浏览：
+Drizzle Kit 在开发期和生产发布期干两件不同的事，我倾向这样分工：
+
+| 命令       | 阶段     | 改库 | 进 git             |
+| ---------- | -------- | ---- | ------------------ |
+| `generate` | 开发     | 否   | 进                 |
+| `push`     | 原型环境 | 是   | 否                 |
+| `studio`   | 开发     | 否   | 否                 |
+| `migrate`  | 生产发布 | 是   | 用 `generate` 产物 |
+
+开发期：写完 Schema 改一下，先 `generate` 看 SQL 是不是预期，提交时一起进仓库。`push` 只在本地原型或一次性环境用，没有任何审计记录：
 
 ```bash
-# 生成迁移文件
 pnpm drizzle-kit generate
-
-# 在目标数据库执行迁移
-pnpm drizzle-kit migrate
-
-# 本地浏览和编辑数据
 pnpm drizzle-kit studio
 ```
 
-`generate` 比较当前 Schema 与上次生成的状态，把差异写入 `out` 目录。生成的 SQL 是普通文件，可以随项目提交到仓库，由评审逐条查看。
-
-`migrate` 按顺序执行 `out` 目录下的迁移，并记录哪些已经应用。生产部署时，`migrate` 通常作为发布脚本的一步：先确认新迁移，再启动新版本实例。
-
-`push` 不写迁移文件，直接把当前 Schema 推到数据库，只适合本地原型：
+生产发布只走 `migrate`：
 
 ```bash
-pnpm drizzle-kit push
+pnpm drizzle-kit migrate
 ```
 
-生产或共享环境应当只走 `generate` + `migrate`。`push` 不留审计记录，列重命名等变更也无法被自动识别。
+首次发布和后续发布共用同一命令：全新库从第一份迁移开始执行并建记录表，已有库只跑未标记的迁移。`migrate` 每次发布跑一次，多副本同时执行会争 advisory lock，得不偿失。`migrate` 应放在发布管线的独立 Step / Job，而不是应用启动钩子：
 
-`studio` 启动一个本地 Web 界面，用于查看表结构和手动编辑数据，不在运行时路径里。
+```d2
+direction: right
 
-## 基础 CRUD API
+pull: 拉取新代码
+review: 确认新增 SQL 已评审
+mig: 执行 drizzle-kit migrate
+start: 启动新版本实例
 
-Drizzle 的 CRUD 以 `db` 为入口，链式调用构造 SQL，通过 `await` 取结果。
+pull -> review -> mig -> start
+```
+
+迁移是单向的：已执行的 SQL 不要改，后续要修就写新文件。
+
+## 跑 CRUD
 
 ### 新增数据
 
@@ -193,13 +191,10 @@ import { db } from './db/client'
 import { users, type NewUser } from './db/schema'
 
 const input: NewUser = { email: 'alice@example.com', name: 'Alice' }
-
 await db.insert(users).values(input)
 ```
 
-`db.insert(users).values(...)` 对应 `INSERT INTO users (...) VALUES (...)`。未显式提供的字段使用默认值或由数据库生成，例如 `id` 和 `createdAt`。
-
-批量插入直接传数组：
+`values` 接收数组时，Drizzle 合成单条 `INSERT ... VALUES (...), (...)`，不会循环执行多条语句：
 
 ```ts
 await db.insert(users).values([
@@ -208,17 +203,13 @@ await db.insert(users).values([
 ])
 ```
 
-Drizzle 会用单条 `INSERT ... VALUES (...), (...)` 完成批量写入。
-
-需要拿到写入结果时使用 `returning`：
+能 `.returning()` 就 `.returning()`：
 
 ```ts
 const [created] = await db.insert(users).values({ email: 'dave@example.com', name: 'Dave' }).returning()
-
-console.log(created.id, created.createdAt)
 ```
 
-`returning()` 由 PostgreSQL 返回指定字段；不传参数时返回完整行。
+省掉一次「插入完再 SELECT 拿 id / createdAt」的往返。
 
 ### 查询数据
 
@@ -231,82 +222,48 @@ const list = await db.select().from(users)
 const [single] = await db.select().from(users).where(eq(users.id, 1))
 ```
 
-`db.select()` 不传参数等价于 `SELECT *`，字段顺序由 Schema 声明顺序决定。只有部分字段需要时显式列出：
+`select()` 不传字段等价于 `SELECT *`，顺序按 Schema 声明。BFF 接口默认显式列字段：
 
 ```ts
 const rows = await db.select({ id: users.id, email: users.email }).from(users)
+// SELECT "id", "email" FROM users
 ```
 
-对应 SQL 是 `SELECT "id", "email" FROM users`，对大表能避免把不必要字段拉回 Node 进程。
+`SELECT *` 在小表或写代码阶段无妨，但接口一旦上线就不应该把无关字段带到前端——一是 payload 浪费，二是提前暴露一些你其实不想暴露的列。
 
-### 更新数据
+### 更新与删除
 
 ```ts
-import { eq } from 'drizzle-orm'
-import { db } from './db/client'
-import { users } from './db/schema'
-
 await db.update(users).set({ name: 'Alice 2' }).where(eq(users.id, 1))
-```
-
-`set` 写要修改的字段，`where` 限定更新范围；不写 `where` 会更新整张表，是常见事故来源。需要返回更新后的行时使用 `.returning()`：
-
-```ts
-const [updated] = await db.update(users).set({ name: 'Alice 2' }).where(eq(users.id, 1)).returning()
-```
-
-### 删除数据
-
-```ts
-import { eq } from 'drizzle-orm'
-import { db } from './db/client'
-import { users } from './db/schema'
-
 await db.delete(users).where(eq(users.id, 1))
 ```
 
-删除操作同样需要 `where`，否则会清空整张表。需要拿回被删除的行时使用 `.returning()`。
+`set` 和 `where` 是必选项。漏 `where` 会更新或清空整张表——这是 ORM 入门踩坑率最高的事故，我一般会在 code review 里专门扫这种调用。需要拿回最新行就链上 `.returning()`。
 
-## 常用查询 API
+## 常用查询
 
-Drizzle 的查询条件都来自 `drizzle-orm`，链式组合可以覆盖绝大多数日常场景。
-
-### 比较与组合条件
+### 条件、排序、分页
 
 ```ts
-import { and, eq, gt } from 'drizzle-orm'
+import { and, asc, count, eq, gt, sql } from 'drizzle-orm'
 
 const rows = await db
   .select()
   .from(users)
   .where(and(eq(users.email, 'alice@example.com'), gt(users.age, 18)))
-```
-
-常用操作符：
-
-- `eq`、`ne`、`gt`、`gte`、`lt`、`lte`：基本比较；
-- `isNull`、`isNotNull`：NULL 判断；
-- `inArray`、`notInArray`：集合判断；
-- `like`、`ilike`：模糊匹配，`ilike` 在 PostgreSQL 上大小写不敏感；
-- `and(...)`、`or(...)`：组合条件，复杂查询可嵌套。
-
-### 排序、分页与聚合
-
-```ts
-import { asc, count, sql } from 'drizzle-orm'
-
-const page = await db.select().from(users).orderBy(asc(users.createdAt)).limit(20).offset(40)
+  .orderBy(asc(users.createdAt))
+  .limit(20)
 
 const [{ total }] = await db.select({ total: count() }).from(users)
 ```
 
-`limit` + `offset` 是最常见的分页写法，深分页成本随偏移量线性增长。`count()` 返回单值聚合；`SUM`、`AVG` 等可以用 `sql\`SUM(amount)\`` 直接写。
+`and` / `or` 是显式组合，比裸 `, ` 清晰，多层嵌套也能一眼看出优先级。`count()` 直接给出聚合值，`SUM` / `AVG` 用 `` sql`SUM(amount)` `` 模板字符串。
 
-### Join
+分页默认 `limit` + `offset`。深分页（`offset` 几万起步）成本随偏移线性增长——大表换条件分页或游标方案。
+
+### Join 与显式列
 
 ```ts
-import { eq } from 'drizzle-orm'
-
 const rows = await db
   .select({
     postId: posts.id,
@@ -317,12 +274,12 @@ const rows = await db
   .innerJoin(users, eq(users.id, posts.authorId))
 ```
 
-`innerJoin` 只保留匹配行，`leftJoin` 保留左表全部行，必要时再加 `where` 补齐过滤条件。`select` 字段对象显式列出，避免返回过大的行结构。
+`innerJoin` 取两表交集，`leftJoin` 保留左表全部行。`select` 字段对象的 key 用 `table_column` 命名，同名字段撞车的概率低得多。
 
 ### 事务
 
 ```ts
-const [created] = await db.transaction(async (tx) => {
+await db.transaction(async (tx) => {
   const [user] = await tx.insert(users).values({ email: 'eve@example.com', name: 'Eve' }).returning()
 
   const [post] = await tx.insert(posts).values({ title: 'Hello', authorId: user.id }).returning()
@@ -331,81 +288,14 @@ const [created] = await db.transaction(async (tx) => {
 })
 ```
 
-`db.transaction` 接收回调，回调内使用 `tx` 执行查询，回调正常返回即提交，抛出异常即回滚。事务范围由业务操作决定：单条写入不需要事务；多表写入或需要一致读的场景再使用。
-
-## 最小 Hono 整合
-
-下面用一个查询接口和一个新增接口展示完整链路。Hono 的具体路由、中间件和部署细节不在本文范围内。
-
-```ts title="src/app.ts"
-import { Hono } from 'hono'
-import { zValidator } from '@hono/zod-validator'
-import { z } from 'zod'
-import { db } from './db/client'
-import { users } from './db/schema'
-
-export const app = new Hono()
-
-const listQuery = z.object({
-  limit: z.coerce.number().int().positive().max(100).default(20),
-})
-
-app.get('/users', zValidator('query', listQuery), async (c) => {
-  const { limit } = c.req.valid('query')
-  const rows = await db.select().from(users).limit(limit)
-  return c.json({ rows })
-})
-
-const createBody = z.object({
-  email: z.string().email(),
-  name: z.string().min(1).max(80),
-})
-
-app.post('/users', zValidator('json', createBody), async (c) => {
-  const body = c.req.valid('json')
-  const [created] = await db.insert(users).values({ email: body.email, name: body.name }).returning()
-  return c.json(created, 201)
-})
-
-app.onError((err, c) => {
-  if (err instanceof z.ZodError) {
-    return c.json({ error: 'invalid_request' }, 400)
-  }
-  return c.json({ error: 'internal_error' }, 500)
-})
-```
-
-要点：
-
-- 请求参数由 Zod 校验。Drizzle 的类型推导只保证查询字段名合法，不替代请求校验。
-- `select` 未指定字段时返回完整行，需要做字段白名单时显式写出。
-- 错误处理集中在 `onError` 中统一映射 HTTP 状态码，避免把数据库异常直接抛给客户端。
-
-## 常见入门问题
-
-### 类型推导不能替代请求校验
-
-`db.insert(users).values({ email: 123 })` 会在编译期报错，但 `body` 来自 HTTP 请求时，TS 类型无法保证运行时正确。请求参数校验（Zod、Valibot、TypeBox 等）必须独立于 Drizzle 类型。
-
-### `push` 不等同于迁移流程
-
-`drizzle-kit push` 直接把当前 Schema 推到数据库，不生成迁移文件。生产或共享环境只能使用 `generate` + `migrate`，并把迁移文件纳入代码评审。
-
-### 连接复用
-
-Postgres.js 客户端应当在整个进程内复用，不要在每次请求或每次查询时新建。Node.js 长驻进程配合 `max` 控制并发；Serverless 环境要使用对应平台的无连接或单连接驱动，常见做法是 `@neondatabase/serverless`、`@vercel/postgres`，或 Postgres.js 通过 `workerd` 入口在 Cloudflare Workers 中运行。
-
-### 时间与 `bigint`
-
-字段类型决定 Drizzle 读出的 JS 类型：
-
-- `timestamp({ withTimezone: true })` 默认按字符串返回；需要 `Date` 时在字段上加 `mode: 'date'`；
-- `bigint` 在 JS 中是 `bigint`，`JSON.stringify` 默认无法处理，需要在接口层转换为字符串或自定义序列化。
-
-### 索引与查询
-
-`where`、`orderBy` 中频繁出现的字段应当建索引；`serial` 主键已自动建索引。SQL 是否走索引要靠 `EXPLAIN ANALYZE` 验证，不能只看文本。
+事务范围由业务粒度决定：单条写入不开事务，多表写入或需要「读到一致快照」时用。我见过一些 BFF 把每个 HTTP 请求都套一层事务，那是浪费——多数请求只是几条独立 SQL，事务开销远大于收益。
 
 ## 总结
 
-把 Drizzle ORM 接入 BFF 的核心链路是：定义 Schema → `drizzle-kit generate` 生成迁移 → 在目标库执行 `migrate` → 用 `db` 完成 CRUD → 在 Hono 路由里把请求参数、数据库操作和 JSON 响应串起来。后续工程化重点是迁移发布顺序、连接池配置、字段白名单和基于真实负载的索引验证。
+最小链路就这几步：装包 → `pgTable` 写 Schema → `generate` + 评审产出迁移文件 → `migrate` 在生产执行 → 用 `db` 跑 CRUD。
+
+后面真正决定 BFF 好不好维护的是三件事：
+
+- **Schema 一改就提交迁移文件**，让 review 能拦住「删了一列、丢了数据」这类事故；
+- **`postgres` 客户端的最大连接数按实例数估算**，避免 PostgreSQL 端被连接打爆；
+- **查询永远带字段白名单和分页**，不靠 TS 类型偷懒——减少 payload、避免泄漏字段，也为后续分析慢 SQL 留下清晰对象。
