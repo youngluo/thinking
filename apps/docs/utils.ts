@@ -74,6 +74,8 @@ function toPublicRoutePath(pathname: string) {
   return sanitizeRoutePath(pathname)
 }
 
+const MARKDOWN_EXTENSIONS = ['.md', '.mdx'] as const
+
 function getMarkdownFiles(dir: string): string[] {
   if (!existsSync(dir)) {
     return []
@@ -86,7 +88,13 @@ function getMarkdownFiles(dir: string): string[] {
       return getMarkdownFiles(filePath)
     }
 
-    return entry.isFile() && entry.name.endsWith('.md') ? [filePath] : []
+    if (!entry.isFile()) {
+      return []
+    }
+
+    return MARKDOWN_EXTENSIONS.some((ext) => entry.name.endsWith(ext))
+      ? [filePath]
+      : []
   })
 }
 
@@ -94,7 +102,7 @@ function toRoutePath(filePath: string) {
   return `/${relative(DOCS_ROOT, filePath)
     .split(sep)
     .join('/')
-    .replace(/\.md$/, '')}`
+    .replace(/\.(md|mdx)$/, '')}`
 }
 
 function parseMarkdownMeta(content: string): MarkdownMeta {
@@ -214,7 +222,7 @@ export function getGeneratedSidebar(
       const meta = getMarkdownMeta(filePath)
       const routePath = toPublicRoutePath(toRoutePath(filePath))
       const relativePath = relative(baseDir, filePath).split(sep)
-      const text = relativePath.at(-1)!.replace(/\.md$/, '')
+      const text = relativePath.at(-1)!.replace(/\.(md|mdx)$/, '')
 
       return {
         ...meta,

@@ -20,6 +20,8 @@ function toPublicRoutePath(pathname: string) {
   return sanitizeRoutePath(pathname)
 }
 
+const MARKDOWN_EXTENSIONS = ['.md', '.mdx'] as const
+
 function getMarkdownFiles(dir: string): string[] {
   if (!existsSync(dir)) {
     return []
@@ -32,7 +34,13 @@ function getMarkdownFiles(dir: string): string[] {
       return getMarkdownFiles(filePath)
     }
 
-    return entry.isFile() && entry.name.endsWith('.md') ? [filePath] : []
+    if (!entry.isFile()) {
+      return []
+    }
+
+    return MARKDOWN_EXTENSIONS.some((ext) => entry.name.endsWith(ext))
+      ? [filePath]
+      : []
   })
 }
 
@@ -40,7 +48,7 @@ function toRoutePath(filePath: string) {
   return `/${relative(DOCS_ROOT, filePath)
     .split(sep)
     .join('/')
-    .replace(/\.md$/, '')}`
+    .replace(/\.(md|mdx)$/, '')}`
 }
 
 function isDraftMarkdownFile(filePath: string) {
@@ -87,7 +95,7 @@ function toPublicMarkdownUrl(url: string, filePath: string) {
     return url
   }
 
-  if (pathname.endsWith('.md')) {
+  if (pathname.endsWith('.md') || pathname.endsWith('.mdx')) {
     const targetFile = isAbsolute(pathname)
       ? join(DOCS_ROOT, pathname)
       : join(dirname(filePath), pathname)

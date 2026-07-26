@@ -1,375 +1,343 @@
 ---
-createdAt: '2026-06-21 21:50'
+createdAt: '2026-07-25 19:45'
 draft: true
 ---
 
 # LLM 应用中的缓存设计
 
-LLM 应用很容易把缓存想简单：用户问过一次，下次直接复用答案。这个方向有价值，但也很危险。
+LLM 应用里的许多输入并不会频繁变化。系统指令、工具定义和部分上下文常被反复发送，相同或等价的请求也可能多次触发模型调用，带来额外的 token 消耗和响应延迟。提示词缓存（Prompt Caching）通过复用稳定前缀降低输入成本；如果完整结果可以复用，应用层结果缓存还能直接返回已有输出，避免再次调用模型。下文会围绕这两层缓存展开。
 
-因为 LLM 的一次结果通常不只由“用户问题”决定。它还依赖知识库版本、权限范围、检索参数、prompt 模板、模型版本、上下文、输出 schema，甚至工具返回的数据版本。只按问题做缓存，轻则命中过期答案，重则把别人的权限内结果返回给当前用户。
+## 提示词缓存
 
-所以缓存设计的核心不是“把结果存起来”，而是先分清：
+本节分别说明 Anthropic 与 OpenAI 两种提示词缓存实现规范，并以 Claude Sonnet 4.5 和 GPT-4o 展示各自的使用方式与计费规则。不同模型、部署平台和 API 版本的最小缓存长度、TTL 与价格可能不同，落地时应以当前官方文档为准。
 
-- 缓存的是什么；
-- 这个结果由哪些输入决定；
-- 哪些变化必须让缓存失效；
-- 哪些结果根本不应该缓存。
+### 规范概览
 
-## 为什么 LLM 应用需要缓存
+| 维度         | Anthropic（Claude Sonnet 4.5）                  | OpenAI（GPT-4o）                                               |
+| ------------ | ----------------------------------------------- | -------------------------------------------------------------- |
+| 触发方式     | 显式 `cache_control` 断点，也支持请求级自动缓存 | 自动匹配相同前缀                                               |
+| 最小缓存长度 | 1024 token                                      | 1024 token；命中长度从 1024 token 起按 128 token 一档递增      |
+| 断点         | 最多 4 个显式断点                               | 无需配置显式断点                                               |
+| 首次处理费用 | 5 分钟缓存按标准输入价格的 1.25 倍              | 标准输入价格                                                   |
+| 命中费用     | 标准输入价格的 10%                              | 标准输入价格的 50%                                             |
+| TTL          | 默认 5 分钟，命中后刷新；可付费延长到 1 小时    | 通常在空闲 5～10 分钟后清除，最迟在最后一次使用后 1 小时内清除 |
 
-LLM 应用里的成本不是单次模型调用决定的，而是一条链路叠出来的。一次看似普通的问答，可能包含 query 改写、embedding、检索、rerank、上下文组装、模型生成、结构化校验和失败重试。
+两种规范复用的都是相同提示词前缀的中间计算，但暴露给应用的缓存生命周期不同。Anthropic 显式区分缓存创建与缓存读取，应用可以声明断点和 TTL，因此两类 token 分开计费；GPT-4o 的提示词缓存由模型服务自动管理，应用只会看到普通输入与已缓存输入的费用。
+
+:::info 提示词缓存的两个核心动作
+
+- **写入**：首次处理可缓存前缀时，模型服务保存可复用的中间计算；
+- **命中**：后续请求匹配该前缀时，模型服务复用中间计算，只重新处理未命中的输入并生成输出。
+
+:::
+
+### Anthropic 规范
+
+Anthropic 支持请求级自动缓存和内容块级显式断点。自动缓存只需在请求顶层添加 `cache_control`，模型服务会把断点放在最后一个可缓存的内容块；显式方式则把 `cache_control` 放在指定内容块上，缓存从请求开头到该内容块的前缀。一个请求最多使用 4 个断点，自动缓存与显式断点同时启用时，自动缓存会占用一个名额。
+
+Claude Sonnet 4.5 要求缓存前缀至少达到 1024 token，长度不足时会正常处理请求，但不会创建缓存。默认 5 分钟缓存的写入和命中价格分别是标准输入价格的 1.25 倍和 10%；配置 `ttl: '1h'` 后，写入价格提高到 2 倍。响应中的 `cache_creation_input_tokens` 和 `cache_read_input_tokens` 分别表示写入量与命中量。
+
+下面同时启用请求级自动缓存和两个显式断点。示例假设 `SYSTEM_PROMPT` 本身已经超过 1024 token。
+
+```ts fold
+import Anthropic from '@anthropic-ai/sdk'
+
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+const ANTHROPIC_MODEL = 'claude-sonnet-4-5'
+
+/** 调用 Anthropic，同时启用自动缓存和两个显式断点。 */
+async function callAnthropic(question: string) {
+  const response = await anthropic.messages.create({
+    model: ANTHROPIC_MODEL,
+    max_tokens: 2048,
+    // 请求级自动缓存：断点自动移动到最后一个可缓存内容块。
+    cache_control: { type: 'ephemeral' },
+    system: [
+      {
+        type: 'text',
+        text: SYSTEM_PROMPT,
+        // 第一个断点：系统提示词末尾。
+        cache_control: { type: 'ephemeral' },
+      },
+    ],
+    messages: [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: '参考资料：订单创建后 30 分钟内可以取消，已发货订单不能取消。',
+            // 第二个断点：参考资料末尾。
+            cache_control: { type: 'ephemeral' },
+          },
+          {
+            type: 'text',
+            text: question,
+            // 请求级自动缓存会把断点放在这个内容块末尾。
+          },
+        ],
+      },
+    ],
+  })
+
+  // 从 usage 读取本次写入和命中的缓存 token 数。
+  const cacheCreatedTokens = response.usage.cache_creation_input_tokens ?? 0
+  const cacheReadTokens = response.usage.cache_read_input_tokens ?? 0
+  const answer = response.content.find((block) => block.type === 'text')?.text
+  return { answer, cacheCreatedTokens, cacheReadTokens }
+}
+```
+
+这段代码会在系统提示词、参考资料和用户问题末尾设置三个断点。缓存仍在 TTL 内时，模型服务优先复用最长的匹配前缀：参考资料不变可以命中第二个显式断点；参考资料发生变化时，第一个显式断点仍可复用系统提示词。自动断点位于用户问题末尾，用于缓存完整请求前缀。
+
+在追加式多轮对话中，自动断点会随新消息向后移动。为简化示意，下面按 `system` 和每条消息各包含一个内容块计算：
+
+```text
+第 1 轮：[system + user1] ← 写入缓存（共 2 个内容块）
+
+第 2 轮：[system + user1] + assistant1 + user2（共 4 个内容块）
+          ↑ 复用此前缓存                 ↑ 写入新缓存
+
+第 3 轮：[system + user1 + assistant1 + user2] + assistant2 + user3（共 6 个内容块）
+          ↑ 复用此前缓存                               ↑ 写入新缓存
+
+单轮新增 20 个或更多内容块：
+[上一轮自动断点] + block1 + ... + block20 + [当前自动断点]
+ ↑ 已超出查找范围                              ↑ 从这里向前最多查找 20 个内容块
+```
+
+Anthropic 对每个断点最多向前检查 20 个内容块，当前断点本身算作第一个。图中的最后一种情况新增了 block1 至 block20，当前自动断点位于 block20 末尾；模型服务依次检查 block20 至 block1 后，上一轮自动断点仍位于 block1 之前，已经超出查找范围，因此无法命中。
+
+自动断点未命中时，显式断点仍可独立命中。以上面的代码为例，参考资料前缀不变则复用到第二个断点，参考资料变化则尝试复用系统提示词。只有两个显式断点也未命中时，模型服务才会处理完整提示词。处理完成后，新的自动缓存写入到 block20 末尾。
+
+工具调用可能在一次请求内产生大量内容块，出现图中的情况。此时可以提前在稳定前缀末尾设置显式断点。
+
+### OpenAI 规范
+
+下面以 GPT-4o 为例。模型服务会自动匹配请求中的相同前缀，无需配置缓存断点。提示词达到 1024 token 后才会参与缓存，命中长度从 1024 token 起按 128 token 一档递增。例如相同前缀有 1200 token，最多按 1152 token 计入命中。
+
+GPT-4o 的缓存写入不额外收费，命中的输入 token 按标准输入价格的 50% 计费。响应中的 `usage.prompt_tokens_details.cached_tokens` 表示本次命中的输入 token 数，不提供单独的缓存写入字段。GPT-5.6 及后续模型还支持显式断点，缓存写入按标准输入价格的 1.25 倍计费，并通过 `cache_write_tokens` 返回写入量。
+
+下面的示例假设 `SYSTEM_PROMPT` 与参考资料组成的稳定前缀已经超过 1024 token。
+
+```ts fold title="src/openai-call.ts"
+import OpenAI from 'openai'
+
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+const OPENAI_MODEL = 'gpt-4o'
+
+/** 调用 OpenAI，把稳定内容放在消息序列前部。 */
+async function callOpenAI(question: string) {
+  const completion = await openai.chat.completions.create({
+    model: OPENAI_MODEL,
+    messages: [
+      // 稳定的前缀：放在 messages 前面，命中率最高。
+      { role: 'system', content: SYSTEM_PROMPT },
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: '参考资料：订单创建后 30 分钟内可以取消，已发货订单不能取消。',
+          },
+          { type: 'text', text: question },
+        ],
+      },
+    ],
+  })
+
+  // 读取本次命中的缓存 token 数。
+  const cachedTokens = completion.usage?.prompt_tokens_details?.cached_tokens ?? 0
+  return { answer: completion.choices[0]?.message.content, cachedTokens }
+}
+```
+
+### 提示词结构设计
+
+两种规范都按请求前缀匹配缓存，因此提示词应按变化频率排列：
 
 ```d2
 direction: right
 
-A: 用户请求
-B: Query 改写
-C: Embedding
-D: Retrieval
-E: Rerank
-F: Prompt 组装
-G: Model
-H: Parser
-I: 返回结果 {
-  class: ok
-}
-
-A -> B -> C -> D -> E -> F -> G -> H -> I
-```
-
-每一层都有成本和延迟。缓存的价值就在这里：
-
-- 减少重复 embedding 和检索；
-- 降低 rerank、分类、路由这类中间模型调用成本；
-- 避免重复调用慢工具；
-- 让高频问题更快返回；
-- 降低失败重试带来的额外消耗。
-
-但缓存不是越多越好。缓存错了，比不缓存更糟。
-
-## 先分清缓存对象
-
-不同对象的缓存风险不一样，key 的设计也不一样。
-
-| 缓存对象         | 是否常见 | 适合场景                       | 风险                                    |
-| ---------------- | -------- | ------------------------------ | --------------------------------------- |
-| Query rewrite    | 常见     | 用户问题重复、改写成本高       | 改写策略变更后要失效                    |
-| Embedding        | 很常见   | 同一句 query 或文档重复向量化  | embedding 模型变更后要失效              |
-| Retrieval        | 常见     | 知识库更新不频繁、权限过滤明确 | 知识库版本和权限必须进 key              |
-| Rerank           | 常见     | rerank 模型成本高              | topK、rerank 模型、候选集变化会影响结果 |
-| Tool result      | 视情况   | 慢接口、稳定数据、低风险查询   | 实时数据和高风险动作不应缓存            |
-| Final answer     | 谨慎     | FAQ、制度问答、上下文稳定      | 最容易串权限、串版本、串上下文          |
-| Memory selection | 可选     | 长期记忆较多、检索成本高       | 记忆索引更新后要失效                    |
-
-RAG 知识库通常需要缓存，但优先缓存 embedding、retrieval 和 rerank。最终回答缓存要谨慎，因为它已经混合了 prompt、上下文、模型输出和权限。
-
-## 缓存 key 的本质
-
-缓存 key 是**结果依赖项的指纹**。
-
-如果某个输入变化会影响结果，它就必须进入 key。如果某个字段不会影响结果，就不要进入 key。key 太少会命中错误缓存，key 太多会几乎没有命中率。
-
-先看一个错误写法：
-
-```ts
-function getBadCacheKey(question: string) {
-  return hash(question)
-}
-```
-
-它的问题是：同一个问题在不同知识库版本、不同用户权限、不同过滤条件、不同 prompt 模板下，答案可能完全不同。
-
-更好的做法是为不同缓存对象设计不同 key。
-
-```ts
-function stableStringify(value: unknown) {
-  if (Array.isArray(value)) {
-    return `[${value.map(stableStringify).join(',')}]`
+A: 长期稳定 {
+  class: group
+  content: 角色、规则、工具定义、输出 schema {
+    shape: text
   }
-
-  if (value && typeof value === 'object') {
-    const entries = Object.entries(value).sort(([a], [b]) => a.localeCompare(b))
-    return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${stableStringify(item)}`).join(',')}}`
+}
+B: 会话级稳定 {
+  class: group
+  content: 用户配置、记忆摘要 {
+    shape: text
   }
-
-  return JSON.stringify(value)
+}
+C: 阶段性稳定 {
+  class: group
+  content: 检索结果、上下文快照 {
+    shape: text
+  }
+}
+D: 随请求变化 {
+  class: group
+  content: 用户问题、最新工具结果 {
+    shape: text
+  }
 }
 
-function hashObject(value: unknown) {
-  return hash(stableStringify(value))
-}
+A -> B -> C -> D
 ```
 
-`stableStringify` 的作用是让对象字段顺序稳定。否则 `{ a: 1, b: 2 }` 和 `{ b: 2, a: 1 }` 语义一样，却可能生成不同 key。
+从左到右，内容变化越来越频繁。Anthropic 可以在需要独立复用的稳定前缀末尾设置 `cache_control`；GPT-4o 自动匹配前缀，无需设置断点；GPT-5.6 及后续模型也可以设置显式断点。无论采用哪种方式，前缀中的内容和顺序都必须保持一致。
 
-## RAG 缓存怎么做
+内容是否仍然有效由应用判断；模型服务只匹配实际前缀，不会代替应用调用工具或保存工具结果。
 
-RAG 里最常见的是检索缓存。它缓存的是“这个 query 在当前知识库、当前权限、当前检索策略下召回了哪些文档”。
+## 应用层结果缓存
 
-检索缓存 key 通常要包含：
+提示词缓存命中后仍会生成输出。结果缓存则在请求满足相同的复用条件、响应仍然有效时，直接返回已有结果，无需再次调用模型。
 
-- 规范化后的 query；
-- 知识库版本；
-- 过滤条件；
-- 权限范围；
-- `topK`；
-- embedding 模型版本；
-- 检索策略版本。
+### 缓存 key 设计原则
 
-```ts
-type RetrievalCacheInput = {
-  query: string
-  knowledgeBaseVersion: string
-  filters: Record<string, string | string[]>
-  permissionScope: string
-  topK: number
-  embeddingModelVersion: string
-  retrievalStrategyVersion: string
-}
+缓存 key 定义了哪些请求可以共享同一结果。所有影响输出、数据范围或访问权限的因素都应进入 key，与结果无关的请求字段则应排除。常见字段包括：
 
-function normalizeQuery(query: string) {
-  return query.trim().replace(/\s+/g, ' ').toLowerCase()
-}
+- 模板、模型、工具和输出 schema 的版本；
+- 租户或用户隔离范围，以及权限指纹；
+- 去除首尾空白后的用户问题；
+- 上下文指纹；
+- 采样参数及其它影响输出的模型配置。
 
-function getRetrievalCacheKey(input: RetrievalCacheInput) {
-  return hashObject({
-    query: normalizeQuery(input.query),
-    knowledgeBaseVersion: input.knowledgeBaseVersion,
-    filters: input.filters,
-    permissionScope: input.permissionScope,
-    topK: input.topK,
-    embeddingModelVersion: input.embeddingModelVersion,
-    retrievalStrategyVersion: input.retrievalStrategyVersion,
-  })
-}
-```
+与响应无关的 `traceId`、`requestId` 和请求时间戳不应进入 key。`hash` 需要使用确定性序列化。示例只去除问题首尾的空白，不做同义改写或标点清理，避免误把不同问题视为同一请求。
 
-这里最容易漏的是 `knowledgeBaseVersion` 和 `permissionScope`。
-
-知识库更新后，旧检索结果可能已经不对。权限范围变了，同一个 query 能看到的文档也不同。没有这两个字段，缓存就可能返回过期或越权结果。
-
-如果你的知识库更新很频繁，可以把版本设计得更细：
-
-- 全量索引版本：适合定期重建的知识库；
-- collection 版本：适合多知识库隔离；
-- 文档更新时间水位：适合增量更新；
-- 权限策略版本：适合权限规则经常变化的系统。
-
-## 最终回答缓存为什么要谨慎
-
-最终回答缓存的是模型已经生成好的答案。它命中后最快，但风险也最高。
-
-因为最终回答依赖的不只是检索结果，还依赖 prompt、模型、输出 schema、记忆、权限和上下文裁剪策略。
-
-```ts
-type AnswerCacheInput = {
-  question: string
-  promptTemplateVersion: string
+```ts fold title="src/result-cache-key.ts"
+/** 应用层结果缓存 key 所需的输入。 */
+type CacheKeyInput = {
+  templateVersion: string
   modelVersion: string
-  outputSchemaVersion: string
-  permissionScope: string
-  contextHash: string
+  schemaVersion: string
+  permissionHash: string
+  question: string
+  context: string
+  cacheScope: string
+  toolVersions: Record<string, string>
+  temperature: number
+  topP: number
 }
 
-function getAnswerCacheKey(input: AnswerCacheInput) {
-  return hashObject({
-    question: normalizeQuery(input.question),
-    promptTemplateVersion: input.promptTemplateVersion,
+/** 根据一次模型调用的有效输入生成缓存 key。 */
+function getCacheKey(input: CacheKeyInput) {
+  return hash({
+    templateVersion: input.templateVersion,
     modelVersion: input.modelVersion,
-    outputSchemaVersion: input.outputSchemaVersion,
-    permissionScope: input.permissionScope,
-    contextHash: input.contextHash,
+    schemaVersion: input.schemaVersion,
+    permissionHash: input.permissionHash,
+    question: input.question.trim(),
+    contextHash: hash(input.context),
+    cacheScope: input.cacheScope,
+    toolVersions: input.toolVersions,
+    temperature: input.temperature,
+    topP: input.topP,
   })
 }
 ```
 
-这里的 `contextHash` 不建议直接 hash 完整 prompt。完整 prompt 可以 hash，但排查问题会很痛苦。更可维护的方式是 hash 进入 prompt 的关键上下文片段：
+### 失效与并发控制
 
-```ts
-type ContextForHash = {
-  retrievedSourceIds: string[]
-  retrievedSourceVersions: string[]
-  shortTermMemoryVersion?: string
-  longTermMemoryIds: string[]
-  toolResultVersions: string[]
-}
+key 之外还需要配套失效与并发控制：
 
-function getContextHash(context: ContextForHash) {
-  return hashObject(context)
-}
-```
+- TTL 不应超过所有依赖中最短的有效期；
+- 上下文数据、权限、模板或工具变化时，更新 key 中对应的指纹或版本字段，旧条目由 TTL 清理；
+- 错误响应、未通过审核的结果和包含一次性凭证的结果不进入缓存；
+- 同一个 key 失效时，多个等价请求可能同时调用模型，造成重复计算。应用可以合并这些请求，只发起一次模型调用；多实例部署时，可以使用分布式锁协调各实例。
 
-这样缓存不命中时，你能知道是文档变了、记忆变了，还是工具结果变了。
+## 两层缓存的协同
 
-最终回答缓存适合这些场景：
-
-- FAQ 类问题；
-- 制度说明；
-- 产品文档问答；
-- 上下文稳定、权限简单、答案变化不频繁的场景。
-
-不适合这些场景：
-
-- 实时价格、库存、状态、日志；
-- 用户私有数据混杂的问答；
-- 高风险操作建议；
-- 依赖当前工具结果的 Agent 任务；
-- 强个性化、强上下文相关的回答。
-
-## 工具调用缓存怎么做
-
-工具调用缓存要先分清工具类型。
-
-只读、低风险、结果相对稳定的工具可以缓存。写操作、审批、支付、删除、发送消息这类工具不能缓存成“已经执行过所以跳过”。
-
-```ts
-type CachePolicy = {
-  enabled: boolean
-  ttlSeconds: number
-  cacheErrors: boolean
-}
-
-type ToolDefinition = {
-  name: string
-  version: string
-  sideEffect: 'read' | 'write'
-  realtime: boolean
-  cachePolicy?: CachePolicy
-}
-
-function shouldCacheToolResult(tool: ToolDefinition) {
-  if (tool.sideEffect === 'write') return false
-  if (tool.realtime) return false
-  return tool.cachePolicy?.enabled === true
-}
-```
-
-工具结果 key 通常包含：
-
-- 工具名；
-- 工具版本；
-- 参数；
-- 权限范围；
-- 外部数据版本或 TTL。
-
-```ts
-function getToolCacheKey(input: { toolName: string; toolVersion: string; args: Record<string, unknown>; permissionScope: string }) {
-  return hashObject({
-    toolName: input.toolName,
-    toolVersion: input.toolVersion,
-    args: input.args,
-    permissionScope: input.permissionScope,
-  })
-}
-```
-
-临时失败不要随便缓存。比如网络超时、上游 500，这类失败通常应该短 TTL 或不缓存。明确的业务结果可以缓存，比如“当前上下文不足”“该文档不存在”“没有权限”。
-
-## TTL、版本号和失效策略
-
-缓存不是只有 key，还要有失效策略。
+请求先查应用层结果缓存。命中后直接返回；未命中时调用模型，由提示词缓存尝试复用前缀；模型返回可缓存结果后，再写入应用层缓存。
 
 ```d2
-direction: down
+direction: right
 
-A: 生成缓存 key
-B: 查询缓存
-C: 命中? {
+A: 请求进入
+B: 应用层\n结果缓存命中? {
   shape: diamond
   class: decision
 }
-D: 返回缓存结果 {
-  class: ok
-}
-E: 执行真实调用
-F: 可以缓存? {
+C: 直接返回
+D: 调用模型\n提示词缓存命中? {
   shape: diamond
   class: decision
 }
-G: 不写缓存 {
-  class: fail
+E: 复用前缀\n处理剩余输入
+F: 处理全部输入
+G: 生成输出
+H: 结果适合缓存? {
+  shape: diamond
+  class: decision
 }
-H: 写入缓存
-I: 版本或 TTL 变化后失效 {
-  class: ok
-}
+I: 写入应用层\n结果缓存
+J: 返回结果
 
-A -> B -> C
-C -> D: 是
-C -> E: 否
-E -> F
-F -> G: 否
-F -> H: 是
-H -> I
+A -> B
+B -> C: 是
+B -> D: 否
+D -> E: 是
+D -> F: 否
+E -> G
+F -> G
+G -> H
+H -> I: 是
+H -> J: 否
+I -> J
 ```
 
-常见失效规则：
+## 成本计算与监控
 
-| 变化                | 应该失效什么                              |
-| ------------------- | ----------------------------------------- |
-| prompt 模板版本变化 | 最终回答缓存                              |
-| 输出 schema 变化    | 最终回答缓存                              |
-| 模型版本变化        | 最终回答缓存、分类缓存                    |
-| embedding 模型变化  | embedding 缓存、retrieval 缓存            |
-| 知识库版本变化      | retrieval 缓存、rerank 缓存、最终回答缓存 |
-| 权限策略变化        | retrieval 缓存、tool 缓存、最终回答缓存   |
-| 工具版本变化        | tool 缓存                                 |
-| 长期记忆索引变化    | memory selection 缓存、最终回答缓存       |
+### 成本计算示例
 
-TTL 可以按数据变化速度设置：
+以 Claude Sonnet 4.5 的 5 分钟缓存为例：一次请求包含 7k token 的可缓存前缀和 0.5k token 的动态输入。连续发送两次相同前缀时，以基础输入单价为 1，成本为：
 
-- embedding：长 TTL，模型版本变化时失效；
-- retrieval：中等 TTL，知识库更新时失效；
-- rerank：中等 TTL，候选集或模型变化时失效；
-- tool result：按业务数据时效性设置；
-- final answer：短 TTL 或只对稳定 FAQ 开启；
-- realtime data：默认不缓存。
+```text
+未优化（两次都全量）：
+  2 × 7.5k = 15k
 
-## 观测缓存是否有效
+使用提示词缓存：
+  第一次请求：写入 7k 前缀 + 处理 0.5k 动态输入
+             = 7k × 1.25 + 0.5k
+             = 9.25k
 
-缓存上线后要看指标，否则不知道它是在省钱，还是在制造错误。
+  第二次请求：读取 7k 前缀 + 处理 0.5k 动态输入
+             = 7k × 0.1 + 0.5k
+             = 1.2k
 
-至少要记录：
+  两次合计：9.25k + 1.2k = 10.45k
+```
 
-- cache hit rate；
-- 命中后节省的延迟；
-- 命中后节省的 token；
-- 不同缓存层的命中率；
-- 因版本变化导致的失效次数；
-- 缓存命中后的用户纠错率；
-- 权限相关缓存拒绝次数。
+这里假设两种方案的输出 token 数相同，因此不计入差值。示例中的输入成本约节省 30%；实际收益取决于前缀的复用次数、缓存有效期和模型价格。
 
-如果命中率很低，通常是 key 过细，或者缓存对象本身不稳定。如果命中率很高但错误多，通常是 key 过粗，或者失效策略不完整。
+### 监控指标
 
-## 常见误区
+应用需要记录模型服务返回的 `usage`：Anthropic 关注 `cache_creation_input_tokens` 和 `cache_read_input_tokens`；OpenAI 关注 `cached_tokens`，GPT-5.6 及后续模型还需记录 `cache_write_tokens`。按模型、提示词版本和时间窗口汇总后，重点观察：
 
-### 1. 只按用户问题缓存
+- 提示词缓存 token 命中率：缓存读取 token 占总输入 token 的比例；
+- 缓存净收益：未使用缓存时的估算输入成本减去实际输入成本；
+- 应用层结果缓存命中率：命中次数占查询缓存次数的比例；
+- 请求成本与延迟：统计平均成本和 P95 延迟（95% 的请求不超过该耗时），观察缓存带来的整体收益。
 
-同一个问题在不同知识库版本、权限、上下文下，答案可能不同。只按问题缓存，很容易串数据。
+## 两层缓存的边界
 
-### 2. 把所有字段都放进 key
+两层缓存的使用边界不同：
 
-请求时间、随机 requestId、traceId 这类字段如果进 key，会导致几乎永远不命中。
+| 缓存层         | 边界                               | 影响                                   | 处理方式                                       |
+| -------------- | ---------------------------------- | -------------------------------------- | ---------------------------------------------- |
+| 提示词缓存     | 可复用前缀短于最小缓存长度         | 无法写入或命中缓存                     | 仅在稳定内容达到长度要求时使用                 |
+| 提示词缓存     | 易变内容位于前缀内                 | 从变化位置开始无法命中                 | 将易变内容放在最后，显式断点设在稳定内容末尾   |
+| 提示词缓存     | 相同前缀在 TTL 内很少复用          | 写入成本可能无法被后续命中覆盖         | 根据复用频率和读写价格评估实际收益             |
+| 应用层结果缓存 | 请求包含实时数据、副作用或动态输出 | 可能返回旧结果，或跳过本应执行的操作   | 不缓存完整结果，只复用允许缓存的提示词前缀     |
+| 应用层结果缓存 | 权限范围无法编码进 key             | 不同权限的请求可能共享结果             | 停止共享缓存，或将租户和权限指纹纳入 key       |
+| 应用层结果缓存 | key 缺少版本信息或未设置 TTL       | 依赖更新后仍然返回旧结果               | 将内容版本纳入 key，并按依赖有效期设置 TTL     |
 
-### 3. 忘记权限范围
+提示词缓存读取率持续下降时，可以对比提示词版本、断点位置和请求间隔；结果缓存出现旧数据或越权命中时，则检查 key 的隔离范围和失效条件。
 
-RAG 和工具调用都可能受权限影响。权限不进 key，就可能把 A 用户能看到的内容返回给 B 用户。
+## 总结
 
-### 4. 缓存最终回答过早
+提示词缓存复用相同前缀的计算，应用层结果缓存直接返回仍然有效的完整响应。提示词应按变化频率排列，结果缓存 key 则必须包含所有影响输出和权限的条件。
 
-最终回答是整条链路的产物。链路里任何关键因素变化，都可能让答案变化。除非上下文稳定、权限清楚、版本可控，否则优先缓存中间层。
-
-### 5. 缓存不可重复的工具动作
-
-写操作不是查询结果。发送消息、扣款、删除文件这类操作不能用缓存跳过，也不能把“上次执行成功”当作这次执行成功。
-
-## 最后
-
-LLM 应用里的缓存要按层设计。
-
-RAG 场景一般需要缓存，但优先缓存 embedding、retrieval、rerank 这些中间结果。最终回答缓存收益最大，风险也最大，只适合知识、权限、上下文都稳定的场景。
-
-缓存 key 的原则很简单：**把会影响结果的依赖放进去，把不会影响结果的噪声排除掉。**
-
-做到这一点，缓存才是在降低成本和延迟，而不是把错误答案保存得更久。
+请求先查询结果缓存，未命中时再调用模型并尝试复用提示词前缀。上线后记录 `usage`、两层缓存的命中率、成本和延迟，确认缓存是否真正产生收益。
