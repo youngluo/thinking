@@ -1,7 +1,7 @@
 ---
 createdAt: '2026-07-25 17:09'
 draft: true
-order: 7
+order: 9
 ---
 
 # OpenAI 与 Anthropic 接口字段速查表
@@ -19,7 +19,7 @@ order: 7
 | 字段                    | 类型或范围            | 默认值 | 说明                                         |
 | ----------------------- | --------------------- | ------ | -------------------------------------------- |
 | `model`                 | `string`              | 必填   | 生成响应所用的模型 ID；可用字段取决于模型    |
-| `messages`              | `Message[]`           | 必填   | 对话消息列表，至少 1 条；角色和内容结构见下文 |
+| `messages`              | [`Message[]`](#openai-message) | 必填   | 对话消息列表，至少 1 条 |
 | `stream`                | `boolean`             | `false` | 是否通过 SSE 流式返回响应                   |
 | `max_completion_tokens` | 正整数                | 无     | 单个候选的 token 上限，包含可见输出和推理 token |
 | `max_tokens`            | 正整数                | 无     | 已弃用的输出 token 上限；改用 `max_completion_tokens`；o 系列模型不支持 |
@@ -32,8 +32,8 @@ order: 7
 
 | 字段                  | 类型                                             | 默认值                     | 说明                                      |
 | --------------------- | ------------------------------------------------ | -------------------------- | ----------------------------------------- |
-| `tools`               | `Tool[]`                                         | 无                         | 模型可调用的工具列表，支持函数和自定义工具；结构见下文 |
-| `tool_choice`         | `none \| auto \| required \| ToolChoice`      | 有工具为 `auto`，否则 `none` | `none`：不调用；`auto`：模型决定；`required`：至少调用一个；`ToolChoice`：指定工具或限制可用工具，结构见下文 |
+| `tools`               | [`Tool[]`](#openai-tool)                         | 无                         | 模型可调用的函数或自定义工具列表            |
+| `tool_choice`         | [`ToolChoice`](#openai-tool-choice)               | 有工具为 `auto`，否则 `none` | 控制是否调用工具以及可调用的工具范围        |
 | `parallel_tool_calls` | `boolean`                                        | `true`                     | 是否允许一轮返回多个工具调用              |
 | `response_format`     | `{ type: text \| json_object \| json_schema }`  | `{ type: text }`           | `text`：普通文本；`json_object`：有效 JSON；`json_schema`：符合指定 Schema 的 JSON |
 
@@ -65,49 +65,170 @@ order: 7
 
 #### 复杂字段用法
 
-`messages` 是以下消息对象的联合类型。已弃用的 `function` 消息和 `function_call` 字段不再列出：
+<span id="openai-message"></span>
 
-| 字段           | 适用 `role`                              | 是否必填                         | 类型或结构                                      | 说明                                      |
-| -------------- | ---------------------------------------- | -------------------------------- | ----------------------------------------------- | ----------------------------------------- |
-| `role`         | 全部                                     | 是                               | `system \| developer \| user \| assistant \| tool` | 消息作者类型                              |
-| `content`      | `system`、`developer`                    | 是                               | 字符串或 `text[]`                               | 应用级指令；新模型优先使用 `developer`    |
-| `content`      | `user`                                   | 是                               | 字符串或内容块数组                              | 可包含文本、图片、音频和文件              |
-| `content`      | `assistant`                              | 未提供 `tool_calls` 时需要       | 字符串、`text[]`、单个 `refusal[]` 或 `null`    | 重放模型此前的文本、拒绝或工具调用        |
-| `content`      | `tool`                                   | 是                               | 字符串或 `text[]`                               | 工具执行结果                              |
-| `name`         | `system`、`developer`、`user`、`assistant` | 否                             | `string`                                        | 区分相同角色的不同参与者                  |
-| `refusal`      | `assistant`                              | 否                               | `string \| null`                               | 模型的拒绝说明                            |
-| `audio`        | `assistant`                              | 否                               | `{ id: string } \| null`                       | 引用模型此前返回的音频                    |
-| `tool_calls`   | `assistant`                              | 否                               | `ToolCall[]`                                    | 模型此前发起的函数或自定义工具调用        |
-| `tool_call_id` | `tool`                                   | 是                               | `string`                                        | 对应上一条 `assistant.tool_calls[].id`    |
+`messages` 的类型是 `Message[]`，每种 `role` 对应一种对象结构：
 
-`assistant.content` 在提供 `tool_calls` 时可以为 `null`。文本数组可以包含一个或多个 `text`，拒绝数组只能包含一个 `refusal`，二者不能混用。
+```ts fold title="Message 对象定义"
+type Message =
+  | {
+      // 应用级指令：旧模型使用 system，o1 及更新模型使用 developer
+      role: 'system' | 'developer';
+      content: string | TextContentPart[];
+      name?: string;
+    }
+  | {
+      // 终端用户的提示和上下文
+      role: 'user';
+      content: string | UserContentPart[];
+      name?: string;
+    }
+  | {
+      // 模型此前的回复或工具调用
+      role: 'assistant';
+      // 存在 tool_calls 时可以为空；text 和 refusal 不能混用
+      content?: string | TextContentPart[] | [{ type: 'refusal'; refusal: string }] | null;
+      name?: string;
+      refusal?: string | null;
+      audio?: { id: string } | null;
+      tool_calls?: ToolCall[];
+    }
+  | {
+      // 工具执行结果
+      role: 'tool';
+      content: string | TextContentPart[];
+      // 对应上一条 assistant.tool_calls[].id
+      tool_call_id: string;
+    };
 
-消息内容块支持以下结构：
+type UserContentPart =
+  | TextContentPart
+  | ImageContentPart
+  | AudioContentPart
+  | FileContentPart;
 
-| 适用角色                                    | `type`        | 结构                                                | 说明                                      |
-| ------------------------------------------- | ------------- | --------------------------------------------------- | ----------------------------------------- |
-| 所有角色                                    | `text`        | `{ type: 'text', text, prompt_cache_breakpoint? }`  | 文本内容；缓存断点只能为 `{ mode: 'explicit' }` |
-| `user`                                      | `image_url`   | `{ type: 'image_url', image_url: { url, detail? }, prompt_cache_breakpoint? }` | `detail`：`auto`、`low`、`high`，默认为 `auto` |
-| `user`                                      | `input_audio` | `{ type: 'input_audio', input_audio: { data, format }, prompt_cache_breakpoint? }` | `data` 为 Base64；`format`：`wav` 或 `mp3` |
-| `user`                                      | `file`        | `{ type: 'file', file, prompt_cache_breakpoint? }`  | `file` 使用 `file_id`，或使用 `file_data` 与 `filename` |
-| `assistant`                                 | `refusal`     | `{ type: 'refusal', refusal }`                      | 模型拒绝内容，不能与 `text` 放在同一数组中 |
+type PromptCacheBreakpoint = { mode: 'explicit' };
 
-`assistant` 的专属对象字段如下：
+type TextContentPart = {
+  type: 'text';
+  text: string;
+  prompt_cache_breakpoint?: PromptCacheBreakpoint;
+};
 
-| 字段         | 结构                                                                         | 说明                                      |
-| ------------ | ---------------------------------------------------------------------------- | ----------------------------------------- |
-| `audio`      | `{ id: string }`                                                             | 引用模型此前返回的音频                    |
-| `tool_calls` | `{ id, type: 'function', function: { name, arguments } }[]`                   | `arguments` 是模型生成的 JSON 字符串，执行前需要校验 |
-| `tool_calls` | `{ id, type: 'custom', custom: { name, input } }[]`                           | `input` 是模型为自定义工具生成的字符串输入 |
-| `refusal`    | `string \| null`                                                            | 模型的拒绝说明；没有拒绝时为 `null`       |
+type ImageContentPart = {
+  type: 'image_url';
+  image_url: {
+    // 图片 URL 或 data URL
+    url: string;
+    // 默认为 auto
+    detail?: 'auto' | 'low' | 'high';
+  };
+  prompt_cache_breakpoint?: PromptCacheBreakpoint;
+};
 
-`tool_choice` 使用对象时支持以下结构：
+type AudioContentPart = {
+  type: 'input_audio';
+  input_audio: {
+    // Base64 编码的音频
+    data: string;
+    format: 'wav' | 'mp3';
+  };
+  prompt_cache_breakpoint?: PromptCacheBreakpoint;
+};
 
-| `type`          | 结构                                                      | 含义                         |
-| --------------- | --------------------------------------------------------- | ---------------------------- |
-| `function`      | `{ type: 'function', function: { name } }`                 | 强制调用指定函数工具         |
-| `custom`        | `{ type: 'custom', custom: { name } }`                     | 强制调用指定自定义工具       |
-| `allowed_tools` | `{ type: 'allowed_tools', allowed_tools: { mode, tools } }` | 将可调用工具限制在指定集合内 |
+type FileContentPart = {
+  type: 'file';
+  file:
+    | { file_id: string }
+    | { file_data: string; filename?: string };
+  prompt_cache_breakpoint?: PromptCacheBreakpoint;
+};
+
+type ToolCall =
+  | {
+      id: string;
+      type: 'function';
+      function: {
+        name: string;
+        // JSON 参数字符串，执行前需要校验
+        arguments: string;
+      };
+    }
+  | {
+      id: string;
+      type: 'custom';
+      custom: {
+        name: string;
+        input: string;
+      };
+    };
+```
+
+<span id="openai-tool"></span>
+
+`tools` 的类型是 `Tool[]`，支持函数工具和自定义工具：
+
+```ts fold title="Tool 对象定义"
+type Tool =
+  | {
+      type: 'function';
+      function: {
+        // 工具名，最长 64 字符，只能包含字母、数字、下划线和连字符
+        name: string;
+        // 帮助模型判断何时调用工具
+        description?: string;
+        // 参数的 JSON Schema；省略表示无参数
+        parameters?: Record<string, unknown>;
+        // 是否严格遵循 Schema，默认为 false
+        strict?: boolean | null;
+      };
+    }
+  | {
+      type: 'custom';
+      custom: {
+        name: string;
+        description?: string;
+        // 省略或 text 表示自由文本；grammar 用语法约束输入
+        format?:
+          | { type: 'text' }
+          | {
+              type: 'grammar';
+              grammar: {
+                syntax: 'lark' | 'regex';
+                definition: string;
+              };
+            };
+      };
+    };
+```
+
+<span id="openai-tool-choice"></span>
+
+`tool_choice` 的类型是 `ToolChoice`：
+
+```ts fold title="ToolChoice 对象定义"
+type ToolChoice =
+  // none：不调用；auto：模型决定；required：至少调用一个
+  | 'none'
+  | 'auto'
+  | 'required'
+  // 强制调用指定函数工具
+  | { type: 'function'; function: { name: string } }
+  // 强制调用指定自定义工具
+  | { type: 'custom'; custom: { name: string } }
+  // 将可调用工具限制在指定集合内
+  | {
+      type: 'allowed_tools';
+      allowed_tools: {
+        // auto：也可直接回答；required：必须调用至少一个工具
+        mode: 'auto' | 'required';
+        tools: Array<
+          | { type: 'function'; function: { name: string } }
+          | { type: 'custom'; custom: { name: string } }
+        >;
+      };
+    };
+```
 
 高级与多模态对象字段的结构如下：
 

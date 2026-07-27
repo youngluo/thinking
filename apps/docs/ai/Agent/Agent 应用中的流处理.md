@@ -1,6 +1,6 @@
 ---
 createdAt: '2026-06-12 00:00'
-order: 6
+order: 7
 ---
 
 # Agent 应用中的流处理
