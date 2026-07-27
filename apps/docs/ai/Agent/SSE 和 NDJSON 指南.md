@@ -38,9 +38,7 @@ A: 浏览器 EventSource
 B: HTTP 请求
 C: 服务端保持连接
 D: 持续写入事件
-E: 前端增量渲染 {
-  class: ok
-}
+E: 前端增量渲染
 
 A -> B -> C -> D -> E
 ```
@@ -203,9 +201,7 @@ A: 浏览器 fetch
 B: POST + JSON body
 C: 服务端逐行写 JSON
 D: 按行解析为对象
-E: 处理结构化事件 {
-  class: ok
-}
+E: 处理结构化事件
 
 A -> B -> C -> D -> E
 ```
@@ -489,17 +485,13 @@ B: "请求体是否复杂\n或消费端是否多端？" {
   width: 260
   class: decision
 }
-C: NDJSON {
-  class: ok
-}
+C: NDJSON
 D: "主要面向浏览器\n且请求简单？" {
   shape: diamond
   width: 260
   class: decision
 }
-E: SSE {
-  class: ok
-}
+E: SSE
 F: WebSocket
 
 A -> B
