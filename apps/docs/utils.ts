@@ -264,16 +264,6 @@ export function getGeneratedSidebar(
     })
 }
 
-export function getMermaidRoutePaths() {
-  return CONTENT_PATHS.flatMap((dir) =>
-    getPublishedMarkdownFiles(join(DOCS_ROOT, dir))
-  )
-    .filter((filePath) =>
-      readFileSync(filePath, 'utf-8').includes('```mermaid')
-    )
-    .map((filePath) => toPublicRoutePath(toRoutePath(filePath)))
-}
-
 function getWhitespaceMarkdownFiles(includeDraft = false) {
   return CONTENT_PATHS.flatMap((dir) =>
     getVisibleMarkdownFiles(join(DOCS_ROOT, dir), includeDraft)

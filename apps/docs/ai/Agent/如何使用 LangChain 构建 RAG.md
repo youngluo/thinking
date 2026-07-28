@@ -5,441 +5,454 @@ order: 5
 
 # 如何使用 LangChain 构建 RAG
 
-[RAG 是什么](<./RAG 是什么.md>)把“为什么需要 RAG”和“链路怎么拆”讲清楚了。这篇文章继续往代码层走：用 LangChain.js 把 RAG 链路落地，并把检索能力挂到 agent 上。
+[《RAG 是什么》](<./RAG 是什么.md>)介绍了 RAG 的基本流程。本文使用 LangChain.js 将这套流程落地：读取并切分 PDF，通过 Embedding 模型生成向量并写入 Qdrant，再根据用户问题检索相关文档块，交给聊天模型生成答案。
 
-读完以后你能拿到：
+## 准备工作
 
-- 一条最小 RAG 链路的核心写法（TypeScript + LangChain.js）；
-- 把检索封装成 tool，并用 agent 调度工具的写法；
-- 几个工程上最常踩的坑和调优点。
+### 安装依赖
 
-目标很明确：看完以后，你能把 LangChain 的核心组件放回 RAG 链路里，而不是只记住一组分散的 API。
-
-## LangChain 是什么
-
-LangChain 是一个 LLM 应用框架。它本身不提供 LLM，核心价值是把“接 LLM”这件事标准化，把检索、工具、记忆、链式调用这些高频模式抽成可复用组件。
-
-它要解决的核心问题是：让你不用每次都从零写一遍 prompt 拼接、输出解析、上下文管理这些样板代码。
-
-更具体一点，LangChain 提供的几类核心抽象，正好对应 RAG 链路上的关键节点：
-
-| 抽象                  | 解决的问题                           | 对应 RAG 链路节点         |
-| --------------------- | ------------------------------------ | ------------------------- |
-| `Loader` / `Document` | 把各种来源的原始内容读成结构化文档   | 离线：数据接入            |
-| `TextSplitter`        | 把长文档拆成适合检索的小块           | 离线：切块                |
-| `Embeddings`          | 把文本变成向量                       | 离线：向量化              |
-| `VectorStore`         | 存向量、做相似度检索                 | 离线：建索引 / 在线：召回 |
-| `Retriever`           | 标准化的检索接口（向量/关键词/混合） | 在线：召回                |
-| `PromptTemplate`      | 提示词模板化和变量注入               | 在线：上下文组装          |
-| `ChatModel`           | 统一各家 LLM 调用方式                | 在线：生成                |
-| `OutputParser`        | 把模型输出解析成结构化字段           | 在线：生成                |
-| `Tool` / `Agent`      | 让模型按需调用工具                   | 在线：调度                |
-
-把这条对应关系看清楚，后面写代码就是在按链路填空。
-
-```mermaid
-%%{init: {'themeVariables': {'lineColor': '#7fa3ff'}}}%%
-flowchart LR
-    subgraph OFFLINE[离线阶段]
-        A1[Loader] --> A2[TextSplitter] --> A3[Embeddings] --> A4[VectorStore]
-    end
-
-    subgraph ONLINE[在线阶段]
-        B1[用户问题] --> B2[Retriever] --> B3[PromptTemplate] --> B4[ChatModel] --> B5[OutputParser] --> B6[答案]
-    end
-
-    A4 -. 提供检索 .-> B2
-
-    style OFFLINE fill:#fffaf0,stroke:#ffa500,stroke-width:2px,stroke-dasharray:5,5
-    style ONLINE fill:#fffaf0,stroke:#ffa500,stroke-width:2px,stroke-dasharray:5,5
-    style A1 fill:#7fa3ff29,stroke:#07f,stroke-width:1px,rx:4,ry:4
-    style A2 fill:#bbdefb,stroke:#0d47a1,stroke-width:1px,rx:4,ry:4
-    style A3 fill:#ffe0b2,stroke:#bf360c,stroke-width:1px,rx:4,ry:4
-    style A4 fill:#c8e6c9,stroke:#1b5e20,stroke-width:1px,rx:4,ry:4
-    style B1 fill:#7fa3ff29,stroke:#07f,stroke-width:1px,rx:4,ry:4
-    style B2 fill:#bbdefb,stroke:#0d47a1,stroke-width:1px,rx:4,ry:4
-    style B3 fill:#b2ebf2,stroke:#006064,stroke-width:1px,rx:4,ry:4
-    style B4 fill:#ffe0b2,stroke:#bf360c,stroke-width:1px,rx:4,ry:4
-    style B5 fill:#e1bee7,stroke:#4a148c,stroke-width:1px,rx:4,ry:4
-    style B6 fill:#c8e6c9,stroke:#1b5e20,stroke-width:1px,rx:4,ry:4
+```bash fold
+pnpm add langchain @langchain/core @langchain/openai @langchain/ollama @langchain/qdrant @langchain/textsplitters pdf-parse zod
 ```
 
-## 离线阶段：把文档接进向量库
+### 启动本地服务
 
-离线阶段的目标，是把“原始文档”变成“可被稳定检索的知识单元”。这一段在 [RAG 是什么](<./RAG 是什么.md>) 里讲过为什么，这里只关心怎么做。
+示例依赖两个本地服务：Ollama 负责运行 Embedding 模型，Qdrant 负责存储和检索向量。安装方式可以参考[《Ollama 下载》](https://ollama.com/download)和[《Qdrant 安装文档》](https://qdrant.tech/documentation/installation/)。
 
-### 整体链路
+安装并启动 Ollama 后，下载支持中文的多语言 Embedding 模型：
 
-| 阶段   | 输入            | 处理           | 输出            |
-| ------ | --------------- | -------------- | --------------- |
-| 加载   | 源文件          | `Loader`       | `Document` 列表 |
-| 切块   | `Document` 列表 | `TextSplitter` | `Chunk` 列表    |
-| 向量化 | `Chunk` 列表    | `Embeddings`   | 向量            |
-| 入库   | 向量            | `VectorStore`  | 索引            |
+```bash fold
+ollama pull bge-m3
+```
 
-### 1. 文档加载
+接着通过 Docker 启动 Qdrant：
 
-Loader 把各种来源的原始内容读成统一的 `Document` 对象（`pageContent` + `metadata`）。
+```bash fold
+docker volume create rag-qdrant-data
+docker run -d --name rag-qdrant -p 127.0.0.1:6333:6333 \
+  -v rag-qdrant-data:/qdrant/storage qdrant/qdrant
+```
 
-```typescript
+端口映射只允许本机访问 Qdrant，命名卷 `rag-qdrant-data` 用于持久化数据。服务启动后，可以通过 `http://localhost:6333` 访问 REST API，通过 `http://localhost:6333/dashboard` 打开管理界面。
+
+## 配置模型与向量存储
+
+RAG 使用两类模型：聊天模型根据上下文生成答案，Embedding 模型将文档块和查询转换为向量。两者职责不同，可以来自不同的模型服务。
+
+### 配置聊天模型
+
+`ChatOpenAI` 可以连接实现了 OpenAI 兼容接口的模型服务：
+
+```typescript fold title="src/rag/model.ts"
+import { ChatOpenAI } from '@langchain/openai'
+
+export const model = new ChatOpenAI({
+  // 模型名称
+  model: 'deepseek-v4-flash',
+  // 控制生成内容的随机性
+  temperature: 0,
+  // 模型服务的 API Key
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  // OpenAI 客户端的连接配置
+  configuration: {
+    // OpenAI 兼容接口地址
+    baseURL: 'https://api.deepseek.com',
+  },
+})
+```
+
+### Embedding 与向量存储
+
+Embedding 模型将文本转换为固定维度的数值向量。含义相近的文本，其向量通常也更接近。建立索引时，它负责转换文档块；检索时，它负责转换用户问题。两处必须使用同一个模型和配置，才能在同一向量空间中比较。
+
+向量存储负责保存向量，并根据查询向量寻找相近的数据。本文使用 Qdrant，通过 LangChain 的 `QdrantVectorStore` 统一完成写入和检索。
+
+Qdrant 使用 Collection 组织数据，可以近似理解为关系型数据库中的表。每个文档块会保存为一个 Point，其中包含：
+
+- `id`：Point 的唯一标识，用于定位、更新或删除数据；
+- `vector`：由 Embedding 模型生成的向量，用于计算文档块与查询的相似度；
+- `payload`：与向量关联的附加数据，本文用它保存文档正文和来源信息。
+
+检索时，Qdrant 先计算查询向量与各 Point 的 `vector` 之间的相似度，再返回最相近 Point 的 `payload`。同一 Collection 中的向量需要使用相同的维度和距离计算方式，因此更换 Embedding 模型后通常需要重建 Collection。
+
+### 配置向量存储
+
+```typescript fold title="src/rag/vector-store.ts"
+import { OllamaEmbeddings } from '@langchain/ollama'
+import { QdrantVectorStore } from '@langchain/qdrant'
+
+const embeddings = new OllamaEmbeddings({
+  // 用于生成文本向量的本地模型
+  model: 'bge-m3',
+  // Ollama 服务地址
+  baseUrl: 'http://localhost:11434',
+})
+
+export const vectorStore = new QdrantVectorStore(
+  // 用于生成文档向量和查询向量的 Embedding 模型
+  embeddings,
+  // Qdrant 连接和 Collection 配置
+  {
+    // Qdrant REST API 地址
+    url: process.env.QDRANT_URL ?? 'http://localhost:6333',
+    // 存放文档块的 Collection 名称
+    collectionName: 'rag_documents',
+  }
+)
+```
+
+`QdrantVectorStore` 的第一个参数是 Embedding 模型，第二个参数是 Qdrant 连接配置。首次写入时，如果 Qdrant 中不存在名为 `rag_documents` 的 Collection，`QdrantVectorStore` 会自动创建。
+
+## 构建文档索引
+
+索引脚本负责读取文档、切块并写入向量存储。这属于离线流程，通常只在文档新增或更新时运行。
+
+### 加载文档
+
+示例使用 `pdf-parse` 按页读取本地 PDF，再将每一页转换为 LangChain 的 `Document`。`Document` 使用 `pageContent` 保存正文，使用 `metadata` 保存文件路径和页码。
+
+```typescript fold title="src/rag/indexing.ts"
 import { readFile } from 'node:fs/promises'
 import { Document } from '@langchain/core/documents'
+import { PDFParse } from 'pdf-parse'
 
-async function loadTextFile(filePath: string) {
-  return [
-    new Document({
-      pageContent: await readFile(filePath, 'utf8'),
-      metadata: { source: filePath },
-    }),
-  ]
+/**
+ * 读取本地 PDF 并转换为 LangChain 文档。
+ * @param filePath PDF 文件路径。
+ */
+async function loadPdf(filePath: string) {
+  const parser = new PDFParse({
+    // 从本地 PDF 读取的二进制数据
+    data: await readFile(filePath),
+  })
+
+  try {
+    // 不传参数时提取全部页面的文本
+    const result = await parser.getText()
+    return result.pages
+      .filter((page) => page.text.trim())
+      .map(
+        (page) =>
+          new Document({
+            // 参与切块和检索的当前页正文
+            pageContent: page.text,
+            // 随文档块保留的文件路径和页码
+            metadata: { source: filePath, pageNumber: page.num },
+          })
+      )
+  } finally {
+    // 释放解析器占用的资源
+    await parser.destroy()
+  }
 }
-
-const docs = await loadTextFile('docs/intro.md')
 ```
 
-工程里实际要关心的不是哪个 loader，而是**加载阶段最容易丢东西**：
+### 切分文档
 
-- PDF 解析顺序错乱、表格被拆坏；
-- Markdown 标题层级丢失；
-- 网页正文里混进导航、广告、页脚。
+`RecursiveCharacterTextSplitter` 按默认分隔符依次尝试切分，并用长度限制兜底：
 
-如果这一步做差了，后面召回通常也不会好。
-
-### 2. 切块
-
-`TextSplitter` 把长文档拆成适合检索的小块。这一步直接决定 RAG 的上限。
-
-```typescript
+```typescript fold title="src/rag/indexing.ts"
 import { RecursiveCharacterTextSplitter } from '@langchain/textsplitters'
 
 const splitter = new RecursiveCharacterTextSplitter({
+  // 每个文档块的最大字符数
   chunkSize: 500,
+  // 相邻文档块重叠的字符数
   chunkOverlap: 50,
-  separators: ['\n## ', '\n### ', '\n\n', '\n', ' ', ''],
 })
-
-const chunks = await splitter.splitDocuments(docs)
 ```
 
-几个常见参数的取舍：
+`chunkSize` 和 `chunkOverlap` 只是示例参数，实际取值应根据文档结构和评测结果调整。
 
-| 参数           | 取值范围      | 调大后果               | 调小后果         |
-| -------------- | ------------- | ---------------------- | ---------------- |
-| `chunkSize`    | 200 ~ 1000    | 噪声多、关键信息被淹没 | 语义不完整       |
-| `chunkOverlap` | 0 ~ chunkSize | 重复内容变多           | 边界处上下文断裂 |
-| `separators`   | 按结构排      | 结构优先级下降         | 切到不该切的位置 |
+### 写入向量存储
 
-工程经验：**结构优先，长度兜底，必要时加少量 overlap**。Markdown 文档先用 `MarkdownHeaderTextSplitter` 按标题切，再用 `RecursiveCharacterTextSplitter` 按长度补切。这个组合比单层按字符切更稳。
+将加载和切分串起来，再调用 `addDocuments` 写入文档块。`vectorStore` 会使用自身配置的 Embedding 模型生成向量：
 
-### 3. 向量化与入库
+```typescript fold title="src/rag/indexing.ts"
+import { vectorStore } from './vector-store'
 
-```typescript
-import { OpenAIEmbeddings } from '@langchain/openai'
-import { QdrantVectorStore } from '@langchain/qdrant'
+/**
+ * 为指定 PDF 建立索引。
+ * @param filePath 要建立索引的 PDF 文件路径。
+ */
+export async function indexDocument(filePath: string) {
+  // loadPdf 接收文件路径，返回要切分的 PDF 文档
+  const documents = await loadPdf(filePath)
 
-const embeddings = new OpenAIEmbeddings({
-  model: 'text-embedding-3-small',
-})
+  // splitDocuments 接收文档列表，返回切分后的文档块
+  const chunks = await splitter.splitDocuments(documents)
 
-const vectorStore = await QdrantVectorStore.fromExistingCollection(embeddings, {
-  url: process.env.QDRANT_URL,
-  collectionName: 'handbook',
-})
-
-await vectorStore.addDocuments(chunks)
-```
-
-选型上有几个分叉：
-
-- **Embedding 模型**：`text-embedding-3-small` 是成本优先的默认选择，私有部署可以选 HuggingFace 上的开源模型；
-- **VectorStore**：本文以 Qdrant 为例。生产环境使用可持久化、可水平扩展、支持过滤条件的向量数据库，不使用内存向量库；
-- **关键词索引**：错误码、接口名、版本号这类问题，关键词匹配比纯语义匹配更稳。生产环境要做“向量 + 关键词”混合召回，不要只依赖向量。
-
-Qdrant collection 要提前创建，向量维度必须和 embedding 模型一致。`text-embedding-3-small` 的默认向量维度是 1536，所以 collection 使用 cosine distance 和 1536 维向量。
-
-核心链路串起来就是四步：加载文档、切块、连接 Qdrant、写入 chunks。
-
-```typescript
-import { readFile } from 'node:fs/promises'
-import { Document } from '@langchain/core/documents'
-import { RecursiveCharacterTextSplitter } from '@langchain/textsplitters'
-import { OpenAIEmbeddings } from '@langchain/openai'
-import { QdrantVectorStore } from '@langchain/qdrant'
-
-async function loadTextFile(filePath: string) {
-  return [
-    new Document({
-      pageContent: await readFile(filePath, 'utf8'),
-      metadata: { source: filePath },
-    }),
-  ]
-}
-
-async function buildIndex(filePath: string) {
-  const docs = await loadTextFile(filePath)
-  const splitter = new RecursiveCharacterTextSplitter({
-    chunkSize: 500,
-    chunkOverlap: 50,
-  })
-  const chunks = await splitter.splitDocuments(docs)
-  const embeddings = new OpenAIEmbeddings({
-    model: 'text-embedding-3-small',
-  })
-
-  const vectorStore = await QdrantVectorStore.fromExistingCollection(embeddings, {
-    url: process.env.QDRANT_URL,
-    collectionName: 'handbook',
-  })
-
+  // addDocuments 接收文档块，并生成向量后写入 Qdrant
   await vectorStore.addDocuments(chunks)
-  return vectorStore
 }
 ```
 
-## 在线阶段：检索 + 生成
+`addDocuments` 会通过 `embeddings` 生成向量，并将向量、正文和元数据写入 `rag_documents`。
 
-在线阶段的目标是：用户提了一个问题，把“正确资料”送到模型面前。离线阶段产出的 `vectorStore` 在这里转成 `retriever`，再接到 prompt 和模型。
+### 运行索引
 
-### LCEL 是什么
+索引入口放在单独的文件中，避免其它模块导入 `indexing.ts` 时触发写入：
 
-在 LangChain.js 里，LCEL 用 `.pipe()` 把 Runnable 串起来，每个环节的输入输出都是流式兼容的：
+```typescript fold title="src/rag/index.ts"
+import { indexDocument } from './indexing'
 
-```typescript
-const chain = prompt.pipe(model).pipe(outputParser)
-const stream = await chain.stream(input) // 天然支持流式
+// 要建立索引的 PDF 文件路径
+await indexDocument('docs/handbook.pdf')
 ```
 
-相比旧的 `LLMChain`、`RetrievalQA` 这类高阶封装，LCEL 更灵活、调试更容易，并且内置支持 streaming、异步调用和 batch。**新项目直接用 LCEL**。
+## 构建 RAG 链
 
-### 搭建检索链
+文档写入索引后，在线流程依次完成检索、提示词组装、模型调用和输出解析。LangChain 将每个步骤表示为 Runnable，再通过 `RunnableSequence` 串成一条可调用的 RAG 链。
 
-```typescript
-import { ChatPromptTemplate } from '@langchain/core/prompts'
-import { ChatOpenAI } from '@langchain/openai'
-import { StringOutputParser } from '@langchain/core/output_parsers'
-import { RunnablePassthrough, RunnableSequence } from '@langchain/core/runnables'
+### 创建检索器
+
+检索器（Retriever）将向量存储的搜索能力封装为统一接口：输入问题字符串，返回相关的 `Document[]`。`asRetriever` 用于从 `vectorStore` 创建检索器：
+
+```typescript fold title="src/rag/chain.ts"
+import { vectorStore } from './vector-store'
+
+export const retriever = vectorStore.asRetriever({
+  // 每次检索返回的文档块数量
+  k: 4,
+})
+```
+
+### 组装检索上下文
+
+检索器输出 `Document[]`，而提示词需要文本形式的上下文，因此要先将文档块中的正文和来源整理成字符串：
+
+```typescript fold title="src/rag/chain.ts"
 import type { Document } from '@langchain/core/documents'
 
-const retriever = vectorStore.asRetriever({ k: 4 })
-
-const prompt = ChatPromptTemplate.fromMessages([
-  [
-    'system',
-    `你是一个问答助手。请严格根据下面提供的资料回答问题。
-如果资料里没有答案，直接说“我不知道”，不要编造。
-回答时在末尾用 [1][2] 这样的形式标注引用来源。`,
-  ],
-  ['human', '资料：\n{context}\n\n问题：{question}'],
-])
-
-const llm = new ChatOpenAI({
-  model: 'deepseek-chat',
-  temperature: 0,
-  apiKey: process.env.DEEPSEEK_API_KEY,
-  configuration: {
-    baseURL: 'https://api.deepseek.com/v1',
-  },
-})
-
-const formatDocs = (docs: Document[]) => docs.map((d, i) => `[${i + 1}] ${d.pageContent}`).join('\n\n')
-
-const ragChain = RunnableSequence.from([
-  {
-    context: retriever.pipe(formatDocs),
-    question: new RunnablePassthrough(),
-  },
-  prompt,
-  llm,
-  new StringOutputParser(),
-])
-
-const answer = await ragChain.invoke('什么是 RAG？')
+/**
+ * 将检索到的文档块整理为带来源编号的上下文。
+ * @param documents 检索器返回的文档块。
+ */
+export function formatDocuments(documents: Document[]) {
+  return documents
+    .map((document, index) => {
+      const source = String(document.metadata.source ?? '未知来源')
+      const pageNumber = document.metadata.pageNumber
+      const citation = pageNumber ? `${source}，第 ${pageNumber} 页` : source
+      return `[${index + 1}] 来源：${citation}\n${document.pageContent}`
+    })
+    .join('\n\n')
+}
 ```
 
-几个值得注意的点：
+编号用于建立答案与检索内容的对应关系。当前示例会显示 PDF 文件路径和页码，需要时还可以在 `metadata` 中补充标题或章节信息。
 
-- DeepSeek 走 OpenAI-compatible API，调用前需要配置 `DEEPSEEK_API_KEY`；
-- `retriever.pipe(formatDocs)` 把检索结果拍平成一段文本塞进 prompt；
-- `RunnablePassthrough()` 透传原始 `question`；
-- `temperature: 0` 减少回答的随机性，RAG 场景通常希望稳定输出；
-- prompt 里**显式约束模型**“不知道就说不知道”“给引用来源”，比指望模型自动守规矩可靠得多。
+### 配置提示词
 
-### 端到端调用
+`ChatPromptTemplate` 将检索内容和用户问题放入固定位置，并约束模型只根据提供的资料回答：
 
-```typescript
-const question = '退款被驳回后怎么走？'
-const answer = await ragChain.invoke(question)
+```typescript fold title="src/rag/chain.ts"
+import { ChatPromptTemplate } from '@langchain/core/prompts'
+
+// 参数为按顺序发送给模型的消息模板
+const prompt = ChatPromptTemplate.fromMessages([
+  // system 消息用于约束回答范围和引用格式
+  [
+    'system',
+    `你是一个问答助手。请严格根据提供的资料回答问题。
+如果资料中没有答案，直接回答“我不知道”，不要编造。
+回答时使用 [1][2] 这样的编号标注引用来源。`,
+  ],
+  // human 消息通过占位符接收检索上下文和用户问题
+  ['human', '资料：\n{context}\n\n问题：{question}'],
+])
+```
+
+### 串联并调用 RAG 链
+
+`RunnableSequence.from` 接收 Runnable 数组，并将前一步的输出传给后一步。用户问题首先进入两条分支：一条检索相关文档并生成上下文，另一条保留原始问题。随后再依次构造消息、调用模型并解析输出：
+
+```typescript fold title="src/rag/chain.ts"
+import { StringOutputParser } from '@langchain/core/output_parsers'
+import { RunnablePassthrough, RunnableSequence } from '@langchain/core/runnables'
+import { model } from './model'
+
+export const ragChain = RunnableSequence.from([
+  // 第一项接收用户问题，并生成提示词需要的两个字段
+  {
+    // 检索相关文档，再将 Document[] 整理为上下文字符串
+    context: retriever.pipe(formatDocuments),
+    // 原样保留用户问题
+    question: new RunnablePassthrough(),
+  },
+  // 使用 context 和 question 生成消息列表
+  prompt,
+  // 使用消息列表调用聊天模型
+  model,
+  // 将模型返回的消息转换为字符串
+  new StringOutputParser(),
+])
+```
+
+调用时只需向 RAG 链传入用户问题：
+
+```typescript fold title="src/rag/query.ts"
+import { ragChain } from './chain'
+
+// 参数为 RAG 链接收的用户问题
+const answer = await ragChain.invoke('退款被驳回后怎么处理？')
 console.log(answer)
 ```
 
-返回的是带 `[1][2]` 上下文编号的答案。生产环境要把 `source`、页码、段落 ID 这类 metadata 一起放进上下文，引用才有可追溯性。
+整条链中的数据形态如下：
 
-## 包成 agent：把检索挂成 tool
+```d2
+direction: right
 
-如果你的需求只是“输入问题，输出答案”，上面那条 RAG chain 已经够了。但很多真实场景里，模型需要：
+question: 问题字符串
+fields: "{ context, question }"
+messages: 消息列表
+response: 模型响应
+answer: 答案字符串
 
-- 先看用户问题，决定要不要查资料；
-- 同时能调用其他工具（比如查订单、查天气、写文件）；
-- 在多轮对话里保持上下文。
-
-这就是 agent 的工作。RAG chain 适合固定链路，agent 适合让模型自主决定是否调用工具。下面把检索能力挂成 tool，用 LangChain 的 `createAgent` 调度起来。
-
-### 整体结构
-
-```mermaid
-%%{init: {'themeVariables': {'lineColor': '#7fa3ff'}}}%%
-flowchart LR
-    A[用户问题] --> B[Agent]
-    B --> C{需要查资料?}
-    C -- 是 --> D[search_docs tool] --> E[Retriever] --> B
-    C -- 否 --> F[直接生成答案] --> G[返回]
-    B --> G
-
-    style A fill:#7fa3ff29,stroke:#07f,stroke-width:1px,rx:4,ry:4
-    style B fill:#bbdefb,stroke:#0d47a1,stroke-width:1px,rx:4,ry:4
-    style C fill:#e1bee7,stroke:#4a148c,stroke-width:1px,rx:4,ry:4
-    style D fill:#ffe0b2,stroke:#bf360c,stroke-width:1px,rx:4,ry:4
-    style E fill:#b2ebf2,stroke:#006064,stroke-width:1px,rx:4,ry:4
-    style F fill:#c8e6c9,stroke:#1b5e20,stroke-width:1px,rx:4,ry:4
-    style G fill:#c8e6c9,stroke:#1b5e20,stroke-width:1px,rx:4,ry:4
+question -> fields: 检索并保留问题
+fields -> messages: prompt
+messages -> response: model
+response -> answer: StringOutputParser
 ```
 
-agent 自己判断要不要调用 tool，调完之后把结果回注到上下文再继续推理。**关键不是“agent 更聪明”，而是“模型可以决定走哪条路径”**。
+需要流式读取模型输出时，将 `invoke` 改为 `stream`：
 
-### 调度 agent
+```typescript fold title="src/rag/query.ts"
+// 参数与 invoke 相同，均为用户问题字符串
+const stream = await ragChain.stream('退款被驳回后怎么处理？')
 
-`tool` 的本质是一个有名字、有描述、有入参 schema 的函数。`description` 决定模型什么时候调用工具，`schema` 决定模型能传什么参数。
-
-`createAgent` 接收模型、工具和系统提示词，内部负责工具调用循环。这里继续使用 DeepSeek 系列模型：普通问答用 `deepseek-chat`，复杂推理任务换成 `deepseek-reasoner`。核心就是把 retriever 包成 tool，再交给 agent：
-
-```typescript
-import { createAgent, tool } from 'langchain'
-import { ChatOpenAI } from '@langchain/openai'
-import * as z from 'zod'
-
-async function buildRagAgent(vectorStore) {
-  const retriever = vectorStore.asRetriever({ k: 4 })
-
-  const searchDocs = tool(
-    async ({ query }) => {
-      const docs = await retriever.invoke(query)
-      return docs.map((d) => d.pageContent).join('\n\n')
-    },
-    {
-      name: 'search_docs',
-      description: '从知识库中检索与问题相关的资料。问题涉及具体业务规则、流程、错误码时使用。',
-      schema: z.object({
-        query: z.string().describe('用于检索的关键词或问题'),
-      }),
-    }
-  )
-
-  const llm = new ChatOpenAI({
-    model: 'deepseek-chat',
-    temperature: 0,
-    apiKey: process.env.DEEPSEEK_API_KEY,
-    configuration: {
-      baseURL: 'https://api.deepseek.com/v1',
-    },
-  })
-
-  return createAgent({
-    model: llm,
-    tools: [searchDocs],
-    systemPrompt: `你是问答助手。先判断问题是否需要查资料，需要就调用 search_docs。
-严格基于检索结果回答，资料里没有就直接说不知道，不要编造。`,
-  })
-}
-
-// 使用
-const vectorStore = await buildIndex('docs/handbook.md')
-const agent = await buildRagAgent(vectorStore)
-
-const result = await agent.invoke({
-  messages: [{ role: 'user', content: '退款被驳回后怎么走？' }],
-})
-
-console.log(result.messages.at(-1)?.content)
-```
-
-到这里，agent 已经可以根据问题自己决定要不要查资料、查什么。后续要扩展更多 tool（比如查订单、调接口），只要在 `tools` 数组里追加就行。
-
-## 最佳实践
-
-RAG 链路能不能跑稳，关键不在 LangChain 用得多花，而在几个工程取舍。
-
-### 1. 切块策略决定上限
-
-切块是 RAG 链路里最容易被低估的一步，**先优化切块，再谈别的**。
-
-常见做法：
-
-- 不同文档类型用不同切块策略：Markdown 用 `MarkdownHeaderTextSplitter`，代码用按函数切；
-- 先按结构切，再按长度补切：保住标题/段落完整性，长度只兜底；
-- 调整 `chunkSize` 和 `chunkOverlap`：先用一组基线参数跑评测集，再围绕失败案例调。
-
-很多时候，召回效果差不是 embedding 模型不行，而是 chunk 从一开始就被切坏了。
-
-### 2. 检索别只用纯向量
-
-向量检索对“语义相近”的问题很有效，但对错误码、接口名、版本号这类**字面精确匹配**的需求常常失灵。
-
-更稳的做法是**混合召回**：
-
-- 向量召回负责“问得不一样但意思一样”的情况；
-- 关键词召回（BM25 / 全文索引）负责“问得就是那几个字”的情况；
-- 两条路合并去重，再交给重排模型。
-
-LangChain 里可以通过 `EnsembleRetriever` 把多条召回结果组合起来。
-
-### 3. 观测要早做
-
-RAG 链路涉及 embedding、检索、prompt 拼接、模型调用，任何一段出问题都很难凭感觉定位。**项目第一天就接上 LangSmith**，把每条链路的输入输出、耗时、token 消耗都记录下来。
-
-配置走环境变量最简单，代码侧不需要额外改动：
-
-```bash
-export LANGSMITH_TRACING=true
-export LANGSMITH_API_KEY=lsv2_xxx
-export LANGSMITH_PROJECT=rag-agent
-```
-
-启用 tracing 后，`chain.invoke` / `agent.invoke` / `stream` 这类调用会记录到 LangSmith。
-
-后期排查“为什么这个问题答错了”，基本就是看 trace 找到出错的那一段。
-
-### 4. streaming 和异步
-
-真实产品里没人能接受 LLM 思考十几秒才出字。LangChain 链天然支持流式：
-
-```typescript
-const stream = await ragChain.stream('什么是 RAG？')
 for await (const chunk of stream) {
   process.stdout.write(chunk)
 }
 ```
 
-agent 也支持流式输出，工程里按同一个原则处理：后端尽早把模型增量结果推给前端，不要等完整答案生成完再返回。
+到这里，一条最小 RAG 链已经完成。固定的知识问答直接调用这条链即可，不需要引入 Agent。
 
-### 5. 成本与延迟
+## 将检索器封装为 Agent 工具
 
-生产环境先做这几项成本控制：
+固定 RAG 链会在每次调用时执行检索。如果应用需要由模型判断是否检索，或者还要调用其它工具，可以将检索器接入 Agent。对于始终需要查询知识库的问答场景，继续使用前面的 RAG 链即可。
 
-- **嵌入缓存**：相同文本的 embedding 结果缓存下来，重复文档/重复 query 不重新算；
-- **控制 topK**：k 越大越准但越慢，4~8 是常见起点；
-- **控制上下文长度**：召回结果做截断，避免塞给模型的内容超过窗口的 60%~70%；
-- **模型分层**：普通问答和工具调度用 `deepseek-chat`，复杂推理、规划和长链路分析再切到 `deepseek-reasoner`。
+### 创建检索工具
 
-## 最后总结一下
+`tool` 将检索函数封装为 Agent 可调用的工具。`name` 用于标识工具，`description` 帮助模型判断何时调用，`schema` 负责描述和校验输入参数：
 
-如果把 LangChain 在 RAG 里扮演的角色讲到底，其实就两件事：
+```typescript fold title="src/rag/agent.ts"
+import { tool } from 'langchain'
+import * as z from 'zod'
+import { formatDocuments, retriever } from './chain'
 
-**把 RAG 链路上的关键节点，抽成可拼装的组件。**
+const searchDocuments = tool(
+  // 接收通过 schema 校验的 query 并执行检索
+  async ({ query }) => {
+    const documents = await retriever.invoke(query)
+    return formatDocuments(documents)
+  },
+  // 提供给模型的工具定义
+  {
+    // 工具名称
+    name: 'search_documents',
+    // 帮助模型判断何时调用该工具
+    description: '从知识库检索业务规则、流程和错误码等资料。',
+    // 约束工具参数的名称和类型
+    schema: z.object({
+      // 用于召回文档的问题或关键词
+      query: z.string().describe('用于检索的问题或关键词'),
+    }),
+  }
+)
+```
 
-具体落到代码上：
+工具执行后返回格式化的检索内容。Agent 会将该结果加入消息列表，再让模型继续生成答案。
 
-- 离线阶段：Loader 读文档、TextSplitter 切块、Embeddings 向量化、VectorStore 入库；
-- 在线阶段：Retriever 召回、PromptTemplate 组装、ChatModel 生成、OutputParser 解析；
-- 想要更灵活的调度：把检索挂成 tool，用 `createAgent` 串起来。
+### 创建并调用 Agent
 
-真正决定项目质量的，还是链路上的工程取舍：切块策略、混合召回、观测覆盖、上下文控制。这些和用不用 LangChain 关系不大，但少了哪一项，RAG 都会变成“看起来像、实际上不稳”的玩具系统。
+`createAgent` 会在模型和工具之间循环：模型先根据消息判断是否调用工具；如果调用，Agent 执行工具并将结果返回模型；当模型不再发起工具调用时，循环结束。本示例的调用过程如下：
+
+```d2
+direction: right
+
+question: 用户问题
+model: 模型判断
+decision: 是否检索 {
+  shape: diamond
+  class: decision
+}
+tool: 执行检索工具
+result: 追加检索结果
+answer: 生成最终答案
+
+question -> model -> decision
+decision -> tool: 是
+tool -> result -> model
+decision -> answer: 否
+```
+
+对应代码如下：
+
+```typescript fold title="src/rag/agent.ts"
+import { createAgent } from 'langchain'
+import { model } from './model'
+
+const agent = createAgent({
+  // 负责选择工具和生成答案的聊天模型
+  model,
+  // Agent 可以调用的工具列表
+  tools: [searchDocuments],
+  // 约束 Agent 何时检索以及如何回答
+  systemPrompt: `你是问答助手。涉及业务规则、流程或错误码时，先调用 search_documents。
+严格根据检索结果回答；资料中没有答案时，直接回答“我不知道”，不要编造。`,
+})
+
+const result = await agent.invoke({
+  // 本次调用的对话消息
+  messages: [
+    {
+      // 消息发送者
+      role: 'user',
+      // 用户输入的内容
+      content: '退款被驳回后怎么处理？',
+    },
+  ],
+})
+
+// messages 的最后一项是 Agent 的最终回复
+console.log(result.messages.at(-1)?.text)
+```
+
+返回结果中的 `messages` 保留了本次运行的用户消息、工具调用、工具结果和最终回复。需要流式读取 Agent 的运行过程时，调用 `agent.stream`：
+
+```typescript fold title="src/rag/agent.ts"
+const stream = await agent.stream(
+  {
+    // 本次调用的对话消息
+    messages: [
+      {
+        // 消息发送者
+        role: 'user',
+        // 用户输入的内容
+        content: '退款被驳回后怎么处理？',
+      },
+    ],
+  },
+  {
+    // 每一步都返回当前完整的 Agent 状态
+    streamMode: 'values',
+  }
+)
+
+for await (const state of stream) {
+  // 输出当前步骤新增的最后一条消息
+  console.log(state.messages.at(-1))
+}
+```
+
+`values` 模式会在每个 Agent 步骤完成后返回当前完整状态，因此可以依次看到模型的工具调用、工具结果和最终回复。
+
+## 工程实践
+
+生产环境还需要关注索引更新、模型切换和调用观测：
+
+- **维护文档索引**：`addDocuments` 每次运行都会新增 Point。生产环境应为文档块分配稳定的 `id`，并记录来源和版本。文档更新时，先删除旧 Point，再写入新文档块；
+- **切换 Embedding 模型**：更换模型或版本后，应新建 Collection，并使用新模型重新生成全部文档向量。即使向量维度相同，也不要混用新旧模型生成的向量；
+- **观测调用链路**：使用 LangSmith trace 查看检索结果、模型输入、调用耗时和 token 消耗。

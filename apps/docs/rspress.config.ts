@@ -2,7 +2,6 @@ import { transformerNotationErrorLevel } from '@shikijs/transformers'
 import { pluginNodePolyfill } from '@rsbuild/plugin-node-polyfill'
 import { pluginSitemap } from '@rspress/plugin-sitemap'
 import { defineConfig } from '@rspress/core'
-import mermaid from 'rspress-plugin-mermaid'
 import { config as loadEnv } from 'dotenv'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
@@ -13,7 +12,6 @@ import {
 import {
   getWhitespaceMarkdownExcludePaths,
   getDraftMarkdownExcludePaths,
-  getMermaidRoutePaths,
   getGeneratedSidebar,
   EXPERIENCES_PATH,
   INTERVIEW_PATH,
@@ -106,9 +104,6 @@ export default defineConfig({
         ]
       : []),
   ],
-  ssg: {
-    experimentalExcludeRoutePaths: getMermaidRoutePaths(),
-  },
   route: {
     exclude: [
       'components/**',
@@ -162,7 +157,6 @@ export default defineConfig({
     },
   },
   plugins: [
-    mermaid(),
     pluginSitemap({
       siteUrl: SEO.siteHomeUrl,
     }),
