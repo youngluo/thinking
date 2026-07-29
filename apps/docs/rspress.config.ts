@@ -37,8 +37,7 @@ const SIDEBAR_GROUP_ORDERS: Record<string, string[]> = {
   [EXPERIENCES_PATH]: [
     '架构',
     '微前端',
-    '浏览器原理',
-    '微信小程序',
+    '多端',
     '构建工具',
     'React',
     'Vue',
