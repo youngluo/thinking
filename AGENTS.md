@@ -136,7 +136,6 @@ Rspress 文档位于 `apps/docs/`。文档生成脚本是 `scripts/generate-docs
 - 所有节点、分组标题和连线都使用 D2 默认样式；不要单独设置文字颜色、线条颜色、边框、圆角、箭头样式。
 - 分组容器使用 `class: group`。
 - 嵌套分组容器使用 `class: subgroup`。
-- 危险或需慎重的节点使用 `class: fail`。
 - 判断节点使用 `class: decision`。
 - 普通节点不设置 `class`；除 `group`、`subgroup`、`fail`、`decision` 之外，不新增全局 class。单篇文档确有语义需要时再局部定义。
 - 控制节点大小时使用 `width` 和 `height`；D2 没有通用 CSS 式 `padding`，需要更大留白时优先增大节点尺寸。
