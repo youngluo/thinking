@@ -120,7 +120,7 @@ export default defineConfig({
   },
   themeConfig: {
     nav: [
-      { text: '前端思考', link: getFirstLink(experiences) },
+      { text: '前端', link: getFirstLink(experiences) },
       { text: 'AI', link: getFirstLink(ai) },
       ...(IS_PROD ? [] : [{ text: '代码笔记', link: getFirstLink(code) }]),
       ...(IS_PROD ? [] : [{ text: '面试题', link: getFirstLink(interview) }]),

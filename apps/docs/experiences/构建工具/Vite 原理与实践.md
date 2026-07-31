@@ -5,17 +5,17 @@ draft: true
 
 # Vite 原理与实践
 
-理解 Vite，先别急着把它概括成“不打包”。更稳的入口，是把开发链路和生产链路拆开看：开发阶段服务源码请求，尽量把业务代码按需转换成浏览器可加载的原生 ESM；生产阶段重新进入完整构建流水线，集中完成 Tree Shaking、代码分块和资源优化。
+Vite 在开发和生产阶段采用不同的处理方式。开发时，dev server 根据浏览器请求按需转换源码模块，以缩短启动和更新等待；构建时，Vite 从入口出发处理完整依赖图，生成适合部署的静态资源。这两条链路共同构成了 Vite 的工作方式。
 
-## Vite 8 主要更新点
+## Vite 8 的工具链变化
 
-从 Vite 8 开始，主要变化不在这条主线本身，而在底层工具链。依赖预构建和生产构建都开始走 Rolldown，原来 Rollup 生态里的配置和插件能力还在，但新配置更推荐写到 `rolldownOptions`。JS / TS 转译、生产压缩则更多交给 Oxc：开发时减少单个模块的 transform 时间，生产时也能压低压缩阶段的开销。
+Vite 8 延续了这套开发与生产分工，主要更新集中在底层工具链。依赖预构建和生产构建统一使用 Rolldown，原有的 Rollup 插件大多可以继续使用；新增构建配置应写入 `rolldownOptions`。JS、TS 和 JSX 转换以及生产环境的 JS 压缩主要由 Oxc 完成，CSS 则默认由 Lightning CSS 压缩。
 
-其他变化更偏工程细节。CSS 压缩默认走 Lightning CSS，图片、字体和 `public` 目录资源仍然由 Vite 统一处理 URL 和缓存策略；插件钩子还是围绕 `resolveId`、`load`、`transform` 展开，只是 Vite 8 多了 hook filters，可以在进入 JavaScript 钩子前先过滤模块。`resolve.tsconfigPaths` 这类常用能力也有了内置开关，不过它不是要替代所有插件，只是让简单场景少装一层适配。
+底层工具更换后，Vite 的插件接口仍以 `resolveId`、`load`、`transform` 等钩子为核心，并可通过 hook filters 在进入 JavaScript 钩子前过滤模块。Vite 8 还加入了 `resolve.tsconfigPaths`、`server.forwardConsole` 等配置，分别用于解析 `tsconfig.json` 中的路径映射，以及把浏览器运行时错误和日志转发到 dev server 终端。这些变化分别作用于开发和生产流程。
 
 ## 开发阶段
 
-开发阶段可以拆成四段：启动 dev server、首次打开页面、按需加载模块、文件变化后的 HMR 更新。
+dev server 串起整个开发流程，可以拆成四段：启动 dev server、首次打开页面、按需加载模块和热更新。
 
 ```d2
 grid-columns: 1
@@ -60,7 +60,7 @@ hmr: 热更新 {
   direction: right
 
   a: chokidar 发现变化
-  b: 定位模块并清理缓存
+  b: 定位模块并使缓存失效
   c: 插件处理并寻找 HMR 边界
   d: 推送 update 并局部更新
   e: 整页刷新
@@ -74,45 +74,24 @@ hmr: 热更新 {
 
 ### 启动 dev server
 
-执行 `vite dev` 后，Vite 会先加载配置、解析插件，并准备 HTTP 服务、WebSocket 通道和文件监听。这里准备的是一个能"按需响应模块请求"的服务，而不是提前打包好的应用，所以 Vite 冷启动通常很快。它不需要在一开始就把所有页面、所有路由、所有业务模块都处理完。
+执行 `vite dev` 后，Vite 会先加载配置、解析插件，并准备 HTTP 服务、WebSocket 通道和文件监听。这里准备的是一个按需响应模块请求的服务，不会提前处理所有页面、路由和业务模块，因此冷启动通常较快。
 
-启动阶段还会处理依赖预构建。浏览器原生 ESM 不认识裸模块导入，`import React from 'react'` 必须被改写成 `/node_modules/.vite/deps/react.js?v=hash` 这种明确 URL，预构建就是做这个改写的前置工作。它主要解决两个问题：
+启动阶段还会准备依赖预构建。Vite 发现 `import React from 'react'` 这类裸模块导入后，会先通过 Rolldown 预构建依赖，再把导入地址改写为 `/node_modules/.vite/deps/react.js?v=hash` 这类浏览器可以请求的 URL。预构建主要解决两个问题：
 
-- 兼容性：很多 npm 包仍以 CJS、UMD 或复杂入口形式发布，预构建把它们打成 ESM。
-- 请求数量：有些依赖内部会拆成大量小模块，浏览器按原样逐个请求会让页面首屏变慢。预构建把这类依赖整理成更少、更稳定的文件。
+- 兼容性：将 CJS、UMD 或具有复杂入口的依赖转换为 ESM；
+- 请求数量：有些 ESM 依赖包含大量小模块，浏览器逐个请求会拖慢页面加载。预构建会将这些模块合并，减少请求数量。
 
-在 Vite 8 中，依赖预构建由 Rolldown 负责。它仍然解决兼容性和请求数量问题，同时和生产构建共用同一套打包基础设施，让配置理解和产物形态更一致。
-
-预构建产物落在 `node_modules/.vite/deps/`，文件带 hash 后缀。后续启动如果 lockfile 和配置没变，命中缓存就不会重跑；如果开发过程中出现新的裸模块导入，Vite 也可能补充预构建并刷新页面。
-
-常见配置：
-
-```ts fold title="vite.config.ts"
-import { defineConfig } from 'vite'
-
-export default defineConfig({
-  optimizeDeps: {
-    include: ['lodash-es'],
-    exclude: ['my-local-pkg'],
-  },
-})
-```
-
-`include` 用来显式加入需要预构建、但 Vite 没有自动发现的依赖；`exclude` 用来跳过不希望进入预构建流程的依赖，例如需要按源码方式调试的本地包。预构建的优化前提是"变化少 + 强缓存"，源码因为变化频繁不适合走这条路。
+预构建产物保存在 `node_modules/.vite/deps/`。后续启动时，如果 lockfile 和相关配置没有变化，Vite 会复用已有产物；如果运行过程中发现新的裸模块导入，则会重新执行预构建，并在需要时刷新页面。通常无需手动配置，只有自动识别结果不符合预期时，才需要通过 `optimizeDeps.include` 指定要预构建的依赖，或通过 `optimizeDeps.exclude` 排除不需要预构建的依赖。
 
 ### 首次打开页面
 
-浏览器第一次请求 `index.html` 时，dev server 会先对 HTML 做转换，再注入 HMR 客户端，最后返回给浏览器。这个客户端负责和服务端建立 WebSocket 连接，后续接收 HMR 消息、错误覆盖层消息以及页面重载指令。
+浏览器首次请求 `index.html` 时，dev server 会转换 HTML、注入 HMR 客户端，再将结果返回给浏览器。HMR 客户端随后与服务端建立 WebSocket 连接，用于接收模块更新、错误信息和页面重载指令。
 
-这一步之后，浏览器才真正开始按 HTML 里的入口脚本加载源码模块。也就是说，Vite 的开发阶段不是"启动时产出一个 bundle"，而是"先返回 HTML，再让浏览器沿着 ESM import 图逐个发起模块请求"。
-
-浏览器 console 日志和报错可以通过 `server.forwardConsole` 转发到 dev server 终端，检测到 coding agent 时会自动开启，对 AI 辅助调试场景特别有用。
+浏览器收到 HTML 后，会从入口脚本开始沿 ESM 导入关系请求源码模块。Vite 不会在启动时生成完整 bundle，而是在浏览器请求模块时按需处理。
 
 ### 按需加载模块
 
-业务源码不会在启动时全部转换。浏览器请求到哪个模块，Vite 才处理哪个模块；每个源码文件在开发时仍然以模块为单位存在，浏览器会沿着 import 图继续请求依赖的子模块。这让 Vite 的开发模式更像"模块服务"，而不是"提前打包"。
-
-以 `/src/App.tsx` 为例，dev server 收到请求后，会先解析模块路径，再读取源码、执行转换、分析 import，最后返回浏览器可执行的 ESM：
+以 `/src/App.tsx` 为例，下面的流程图展示 dev server 从收到请求到返回 ESM 的处理过程：
 
 ```d2
 direction: right
@@ -132,33 +111,15 @@ server: Vite Dev Server {
 req -> server.B -> server.C -> server.D -> server.E -> out
 ```
 
-这条链路里，`resolveId` 负责把导入路径解析成模块 id，`load` 负责读取或生成模块内容，`transform` 负责把源码转换成浏览器能执行的形式。TS、JSX、CSS 等语法处理都发生在这里；JS / TS 转译交给 Oxc 后，单个模块的 transform 时间会更短。
+这条链路中，`resolveId` 把导入路径解析为模块 id，`load` 读取或生成模块内容，`transform` 负责转换源码。转换结束后，Vite 会分析 import 语句，将导入地址改写为浏览器可以请求的 URL，并把依赖关系记录到模块图中。转换结果会作为 `transformResult` 缓存在对应的模块节点上。
 
-转换结束后，Vite 会分析 import 语句，把裸模块导入或相对路径改写成浏览器可以请求的 URL，并把依赖关系记录到模块图里。同一份 transform 结果既用于返回浏览器 ESM，也会作为 `transformResult` 缓存在模块节点上（见模块缓存与模块图小节）。
-
-CSS 和静态资源也沿用这套按需请求模型。CSS 被导入时，Vite 会把它包装成浏览器可加载的模块，并在开发阶段支持样式热更新；图片、字体等资源被导入时，会返回浏览器可请求的 URL，`public` 目录下的文件则按原路径直接提供。
-
-插件可以介入这条链路，transform 顺序由插件的 `enforce: 'pre' | 'post'` 和注册顺序共同决定。比如把 `.svg` 当成可导入的字符串：
-
-```ts fold
-import type { Plugin } from 'vite'
-
-export default function svgAsString(): Plugin {
-  return {
-    name: 'svg-as-string',
-    transform(code, id) {
-      if (!id.endsWith('.svg')) return
-      return `export default ${JSON.stringify(code)}`
-    },
-  }
-}
-```
+CSS 和静态资源也会按需处理。导入 CSS 时，Vite 会将其包装成模块，并支持样式热更新；导入图片或字体时，Vite 会返回对应的资源 URL。`public` 目录中的文件不经过转换，直接按原路径提供。
 
 ### 模块缓存与模块图
 
-按需转换不等于每次都重新转换。Vite 会结合文件时间戳、HTTP 协商缓存和依赖缓存，尽量复用已有结果。浏览器重复请求同一个模块时，可以通过 ETag / Last-Modified 命中 304；服务端命中缓存时，也不需要重新走完整 transform。
+Vite 会结合浏览器缓存和 dev server 的转换缓存，避免重复处理模块。源码请求使用 HTTP 协商缓存，预构建依赖则通过带版本参数的 URL 进行强缓存。dev server 会把转换结果保存在模块节点中，并在缓存未失效时复用。
 
-为了让这些缓存能被正确复用和失效，Vite 在服务端维护一份模块图。可以先把它理解成 dev server 的运行时索引：一边通过 URL、id、文件路径或 ETag 找到模块节点，一边记录模块之间的导入关系。
+为了管理转换结果和模块之间的导入关系，Vite 会维护模块图。下面的图展示了模块图如何定位节点，以及每个节点保存的主要信息：
 
 ```d2 maxHeight=400
 graph: EnvironmentModuleGraph {
@@ -195,28 +156,27 @@ graph: EnvironmentModuleGraph {
 }
 ```
 
-对应到 Vite 8 源码里，这些职责可以拆成几部分：
+图中的主要数据结构及字段职责如下：
 
-- `EnvironmentModuleGraph`：模块图本体，内部多组 Map 负责定位模块节点。
-- `EnvironmentModuleNode`：模块节点，保存转换结果、软/硬失效状态和 HMR 边界信息。
-- `importers`：模块节点上的字段，记录"哪些模块导入了当前模块"。
-- `importedModules`：模块节点上的字段，记录"当前模块导入了哪些模块"。
+- `EnvironmentModuleGraph`：通过 URL、id、文件路径或 ETag 定位模块节点；
+- `EnvironmentModuleNode`：保存转换结果、失效状态和 HMR 边界信息；
+- `importers`：记录哪些模块导入了当前模块；
+- `importedModules`：记录当前模块导入了哪些模块。
 
-这样设计有两个直接作用：请求同一个模块时，可以复用上一次的转换结果；文件变化时，也能沿着导入关系找到需要失效或热更新的范围。失效状态会影响下一次请求的处理方式，比如有些模块需要重新 transform，有些只需要更新导入 URL 上的时间戳。
+再次请求尚未失效的模块时，Vite 可以复用转换结果；文件变化后，则沿导入关系使受影响的模块失效，并计算 HMR 更新范围。
 
 ### 热更新
 
-文件保存后，chokidar 检测到变化，Vite 会定位到对应的模块节点，清理其 `transformResult` 缓存，并把变化交给插件的 `handleHotUpdate` 钩子处理。默认流程会沿 `importers` 向上寻找能接住更新的 HMR 边界，如果找到边界就推送局部更新，否则就触发整页刷新。时序图如下：
+文件保存后，chokidar 会把变化通知 Vite。Vite 定位受影响的模块节点，并通过 `handleHotUpdate` 让插件调整本次更新范围，随后沿 `importers` 向上寻找 HMR 边界并使相关模块失效。找到边界时推送局部更新，否则触发整页刷新。完整流程如下：
 
 ```d2 maxHeight=420
 shape: sequence_diagram
 
 developer -> chokidar: 保存文件
 chokidar -> devserver: 通知文件变化
-devserver -> devserver: 定位模块节点并清理缓存
 devserver -> plugins: 执行 handleHotUpdate 钩子
 plugins -> devserver: 返回待更新模块
-devserver -> devserver: 沿 importers 寻找 HMR 边界
+devserver -> devserver: 寻找 HMR 边界并使模块失效
 
 devserver -> client: WebSocket 推送 update（找到边界）
 client -> devserver: 重新 import 新模块
@@ -227,68 +187,99 @@ devserver -> client: WebSocket 推送 full-reload（未找到边界）
 client -> client: 整页刷新
 ```
 
-实际开发里，HMR 边界通常不是业务代码手写的，而是由 React、Vue 等框架插件在转换阶段注入或标记。以 React 为例，组件状态能不能保留取决于 React Fast Refresh 的边界判断；Vite 提供 HMR 通道和模块更新机制，框架插件负责把这个能力翻译成框架内部能理解的刷新方式。
+实际开发中，HMR 边界通常由 React、Vue 等框架插件在转换阶段注入或标记。Vite 负责 HMR 通信和模块更新，框架插件负责将更新接入框架的刷新机制。以 React 为例，组件状态能否保留取决于 React Fast Refresh 的边界判断。
 
-如果脱离框架插件，也可以用底层 API 手写 HMR 边界。例如监听某个工具模块的变化：
+为了说明 HMR 边界如何接收更新，下面用底层 API 展示一个简化示例。假设 `utils` 导出了 `formatMessage`，可以在它更新后替换当前使用的函数：
 
-```ts fold
+```ts fold title="src/main.ts"
+import { formatMessage } from './utils'
+
+let format = formatMessage
+
+function render() {
+  document.querySelector('#app')!.textContent = format('Vite')
+}
+
+render()
+
 if (import.meta.hot) {
   import.meta.hot.accept('./utils', (newModule) => {
+    if (!newModule) return
+
     // 用新模块替换旧实现
+    format = newModule.formatMessage
+    render()
   })
 }
 ```
-
-全局副作用模块、复杂状态初始化模块通常很难形成稳定的 HMR 边界，因为它们的执行结果可能已经影响了全局对象、事件监听、单例实例或应用初始状态。只替换当前模块，未必能安全撤销旧副作用并重建一致状态，所以这类变化更容易退化为整页刷新。客户端 import 新模块时会带 `?t=timestamp` 参数绕过浏览器缓存。
 
 ## 生产阶段
 
 ### 构建流程
 
-`vite build` 不会沿用"浏览器按需请求每个源码模块"的方式，而是从入口开始构建完整依赖图，生成适合线上部署的静态资源。生产阶段的目标也和开发阶段不同：dev 追求启动快、更新快，build 追求资源体积、缓存命中、加载顺序和浏览器兼容。
+`vite build` 从入口开始解析、加载和转换模块，构建完整依赖图，最终生成可部署的静态资源。标准应用默认以 `index.html` 为入口，也可以通过 `build.rolldownOptions.input` 指定其它入口。
 
-在 Vite 8 中，生产构建基于 Rolldown。Rolldown 是 Rust 写的打包器，兼容 Rollup 插件 API，也承接了 Vite 过去大量 Rollup 生态里的配置和插件能力。
+Vite 8 使用 Rust 编写的 Rolldown 完成生产构建。Rolldown 会在模块处理和产物生成过程中执行相应的插件钩子，并兼容 Rollup 插件 API，因此大多数现有 Vite 插件可以继续使用。完整流程如下：
 
 ```d2
 direction: right
 
 start: 执行 vite build
 config: 加载生产配置
-entry: 以 index.html 为入口
+entry: 确定构建入口
+modules: 解析 / 加载 / 转换模块
 graph: 构建完整依赖图
-hooks: 执行构建阶段插件钩子
 optimize: Tree Shaking / 代码分块
-assets: CSS 拆分 / 资源处理
+assets: 处理 CSS / 静态资源
 emit: 压缩 / 哈希命名
 dist: 输出 dist 产物
 
-start -> config -> entry -> graph -> hooks -> optimize -> assets -> emit -> dist
+start -> config -> entry -> modules -> graph -> optimize -> assets -> emit -> dist
 ```
 
 ### 优化策略
 
-生产阶段主要做这些优化：
+基于完整依赖图，Vite 和 Rolldown 默认会执行以下优化：
 
-- Tree Shaking：基于 ESM 静态结构移除未使用代码，CJS 只能做有限分析。
-- Code Splitting：按入口和动态导入拆分 chunk。
-- CSS Code Splitting：把异步 chunk 相关 CSS 拆出，并在对应 chunk 加载时一起获取。
-- 资源 hash：根据内容生成带 hash 的文件名，让未变化的资源更容易命中长期缓存。
-- modulepreload：为 HTML 入口和动态导入涉及的 chunk 计算预加载依赖。
-- 压缩：减小 JS、CSS 和资源体积。JS 默认走 Oxc minifier，CSS 默认走 Lightning CSS minifier。
+- Tree Shaking：基于模块的静态结构移除未使用代码；
+- Code Splitting：根据入口、动态导入和自定义规则生成 chunk；
+- CSS Code Splitting：提取异步 chunk 关联的 CSS，并确保 CSS 加载完成后再执行该 chunk；
+- Module Preload：预加载入口依赖和动态导入所需的 chunk，减少串行请求；
+- 资源哈希：根据内容生成带 hash 的文件名，支持长期缓存；
+- 压缩：客户端构建默认使用 Oxc Minifier 压缩 JS，使用 Lightning CSS 压缩 CSS。
 
-构建配置示例：
+这些策略通常不需要额外配置。下面以 React 项目为例，展示几项可按实际情况调整的配置：
 
 ```ts fold title="vite.config.ts"
 import { defineConfig } from 'vite'
 
 export default defineConfig({
   build: {
-    target: 'es2020',
-    cssCodeSplit: true,
+    // 内联较小的资源，减少额外请求；阈值不宜过大，以免增加包体积
+    assetsInlineLimit: 8 * 1024,
+
+    // CI 已有产物分析时，关闭 gzip 统计可缩短大型项目的构建时间
+    reportCompressedSize: false,
     rolldownOptions: {
       output: {
-        manualChunks: {
-          vendor: ['react', 'react-dom'],
+        codeSplitting: {
+          // 避免生成过小的公共 chunk
+          minSize: 20 * 1024,
+          groups: [
+            {
+              // 框架依赖变动较少，单独分包可提高长期缓存命中率
+              name: 'react-vendor',
+              test: /node_modules[\\/]react/,
+              // 优先于通用公共分组
+              priority: 20,
+            },
+            {
+              // 抽取至少被两个入口共享的模块
+              name: 'common',
+              minShareCount: 2,
+              priority: 10,
+            },
+          ],
         },
       },
     },
@@ -296,101 +287,79 @@ export default defineConfig({
 })
 ```
 
-`build.target` 控制目标浏览器版本。Vite 8 默认是 `'baseline-widely-available'`，对应一组 Baseline Widely Available 浏览器；如果需要更旧的浏览器，可以显式设置为具体 ES 版本或浏览器版本。
-
-`build.rollupOptions` 仍作为兼容别名存在，但新配置优先写 `build.rolldownOptions`。这样既能保留 Rollup 生态里的配置习惯，又能落到 Rolldown 的生产构建链路上。
-
-开发阶段追求"每次改动后的反馈速度"，生产阶段追求"用户访问时的加载效率"。这是两个不同的问题，所以 Vite 没有把 dev server 的按需转换链路直接搬到 build 里。
-
 ## dev 与 build 差异
 
-前面已经分别展开了开发阶段和生产阶段，这里只收束几个实际项目里容易踩到的问题。dev 能跑起来，并不代表 build 一定通过。
+dev 和 build 共用配置与插件体系，但处理范围和输出目标不同：dev 按浏览器请求转换模块，build 则从入口出发分析完整依赖图并生成部署产物。差异主要体现在以下方面：
 
-- **变量动态导入**：dev 只处理当前浏览器真正请求到的模块，没访问到的路径可能不会触发；build 必须提前枚举候选文件，像 `import(path)` 这种完全动态的路径，可能导致构建失败或对应 chunk 没生成。处理时要让动态导入范围可分析，例如固定目录和后缀；批量页面或组件导入优先用 `import.meta.glob`。
+- **处理范围**：未访问的路由或模块可能不会在 dev 中被转换，build 会处理所有可达模块，因此可能暴露模块解析、语法或变量动态导入问题。变量动态导入需使用相对路径和明确扩展名，变量只能表示一层文件名；更复杂的场景可使用 `import.meta.glob`；
 
-- **部署路径问题**：本地 dev server 通常跑在根路径，资源 URL 很容易看起来正常；build 产物里的 JS、CSS、图片 URL 会受 `base` 影响，部署到 CDN、子路径或非根目录时可能 404。处理时要根据部署路径设置 `base`，再用 `vite preview` 或真实部署环境验证。
+- **转换目标**：dev 面向现代浏览器，尽量保留源码语法；build 则根据 `build.target` 转换语法，并执行 Tree Shaking、代码分块和压缩；
 
-- **第三方依赖导出不一致**：dev 预构建后可能把 CJS 依赖整理成浏览器可加载的 ESM，页面暂时能跑；build 重新打包时可能报 `default is not exported by ...`、`X is not exported by ...`，也可能因为错误的 `sideEffects` 声明把样式或初始化代码摇掉。处理时先检查实际导入方式和依赖入口，必要时改成命名导入、升级依赖、加别名或调整 Tree Shaking 配置。
+- **依赖处理**：依赖预构建只用于 dev，build 会重新分析并打包依赖。非标准的 CJS/ESM 导出可能暴露导入错误，错误的 `sideEffects` 声明也可能导致必要代码被移除；
 
-关键改动最好跑 `vite build` 验证，并用 `vite preview` 预览产物。dev server 只能证明开发链路能跑通，不能替代生产构建验证；类型检查则需要交给 `tsc --noEmit` 或独立插件处理。
+- **资源路径**：dev server 直接提供本地资源，build 产物中的 JS、CSS 和图片 URL 则根据 `base` 生成。部署到 CDN 或子路径时，需要按实际路径配置并验证产物。
+
+因此，提交或部署前应运行 `vite build`，再通过 `vite preview` 或真实环境检查产物。Vite 只转译 TypeScript，不执行类型检查，TypeScript 项目还需要运行 `tsc --noEmit` 或相应的检查工具。
 
 ## 插件机制
 
 ### 钩子分类
 
-插件是 Vite 连接开发阶段和生产阶段的扩展层。Vite 8 的插件接口基于 Rolldown / Rollup 插件模型，再补充少量 Vite 自己的钩子。一个插件可以简化成这样：
+Vite 插件扩展了 Rolldown 的插件接口。`resolveId`、`load`、`transform` 等通用钩子同时参与 dev 和 build，Vite 专属钩子则用于配置、dev server、HTML 转换和 HMR。生产构建还会调用 `generateBundle` 等产物生成钩子。
 
-```ts fold
-export default {
-  name: 'example-plugin',
+按执行阶段和职责划分，常用钩子如下：
 
-  config(config) {},
-  configResolved(config) {},
-  configureServer(server) {},
+| 分类      | Hook                 | 执行时机与用途                                                                                                       |
+| --------- | -------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| 配置      | `config`             | 配置解析前执行，用于修改用户传入的 Vite 配置                                                                         |
+| 配置      | `configResolved`     | 配置解析后执行，用于读取和保存最终配置                                                                               |
+| 模块处理  | `resolveId`          | 将 import 路径解析为模块 id，dev 中响应模块请求，build 中参与构建依赖图                                              |
+| 模块处理  | `load`               | 读取模块内容，也可以生成虚拟模块                                                                                     |
+| 模块处理  | `transform`          | 转换模块源码，返回后续链路需要的代码和 source map                                                                    |
+| 开发服务  | `configureServer`    | 仅在 dev 中执行，用于注册中间件、扩展 WebSocket 或保存 dev server 实例                                               |
+| 开发服务  | `handleHotUpdate`    | 仅在 dev 中执行，用于过滤受影响的模块或自定义 HMR 处理；接管更新或触发整页刷新时，需要通过 `server.ws.send` 发送消息 |
+| HTML 处理 | `transformIndexHtml` | 在 dev 和 build 中处理入口 HTML，可以改写内容或注入标签                                                              |
+| 生命周期  | `buildStart`         | 在生产构建开始或 dev server 启动时执行，适合初始化插件状态                                                           |
+| 产物生成  | `generateBundle`     | 仅在 build 的产物生成阶段执行，可以生成额外文件、调整产物或分析 chunk 结构                                           |
+| 生命周期  | `closeBundle`        | 在生产构建结束或 dev server 关闭时执行，适合清理状态、输出报告或通知外部流程                                         |
 
-  resolveId(source, importer) {},
-  load(id) {},
-  transform(code, id) {},
+可以通过 `apply: 'serve' | 'build'` 限制插件的生效范围。只处理特定文件时，可以使用 hook filters 在调用钩子前过滤，并保留钩子内部检查，以兼容不支持该能力的旧版 Vite。下面的 alias 插件便用 hook filter 筛选 `@/` 导入，并将其映射到 `src/`：
 
-  transformIndexHtml(html) {},
-  handleHotUpdate(ctx) {},
-
-  buildStart() {},
-  generateBundle() {},
-  closeBundle() {},
-}
-```
-
-这些钩子可以按执行链路逐个理解：
-
-| Hook                 | 说明                                                                                                                                                                                                        |
-| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `config`             | 最早执行，用来修改用户传入的 Vite 配置                                                                                                                                                                      |
-| `configResolved`     | 拿到最终合并后的配置，适合读取命令、模式、根目录、插件列表等结果                                                                                                                                            |
-| `configureServer`    | 只在 dev server 中生效，可以注册中间件、扩展 WebSocket 或保存 server 实例                                                                                                                                   |
-| `resolveId`          | 把 import 路径解析成模块 id。开发阶段参与每次模块请求，生产阶段参与 Rolldown 构建依赖图                                                                                                                     |
-| `load`               | 读取文件内容，也可以直接生成虚拟模块内容                                                                                                                                                                    |
-| `transform`          | 把源码转换成浏览器或构建器需要的代码                                                                                                                                                                        |
-| `transformIndexHtml` | 专门处理入口 HTML，常见用途是注入脚本、标签或改写 HTML 内容                                                                                                                                                 |
-| `handleHotUpdate`    | 只在开发阶段生效，用来接管文件变化后的 HMR 处理。返回 `undefined` 表示继续走默认 HMR 流程；返回模块数组可以收窄本次需要更新的模块；如果插件要接管更新或触发整页刷新，需要自己通过 `server.ws.send` 推送消息 |
-| `generateBundle`     | 在产物写入前拿到 bundle 信息，适合生成额外文件、调整产物或分析 chunk 结构                                                                                                                                   |
-| `closeBundle`        | 在构建结束后执行，适合做收尾清理、输出报告或通知外部流程                                                                                                                                                    |
-
-如果插件只应该跑在某个阶段，可以用 `apply: 'serve' | 'build'` 限制。如果插件只关心一类文件，应该尽量把匹配范围收窄。Vite 8 可以借助 hook filters 在调用钩子前先过滤模块，避免每个文件都进入 JavaScript 钩子。
-
-举个例子，手写一个 alias 插件把 `@/` 映射到 `src/`：
-
-```ts fold
+```ts fold title="plugins/my-alias.ts"
 import type { Plugin } from 'vite'
 import { fileURLToPath } from 'node:url'
 
 export default function myAlias(): Plugin {
   return {
     name: 'my-alias',
-    resolveId(source) {
-      if (source.startsWith('@/')) {
-        return fileURLToPath(new URL(`./src/${source.slice(2)}`, import.meta.url))
-      }
-      return null
+    resolveId: {
+      // 在进入钩子前过滤非 @/ 导入。
+      filter: { id: /^@\// },
+      handler(source) {
+        // 保留内部检查，以兼容不支持 hook filters 的旧版 Vite。
+        if (!source.startsWith('@/')) return null
+
+        return fileURLToPath(new URL(`../src/${source.slice(2)}`, import.meta.url))
+      },
     },
   }
 }
 ```
 
-这个插件的核心是 `resolveId`。在 dev 模式下，它参与每次模块请求的路径解析；在 build 模式下，它参与 Rolldown 构建依赖图时的路径解析。
+这个插件通过 `resolveId` 统一处理两条链路中的路径解析：dev 模式下解析模块请求，build 模式下参与 Rolldown 构建依赖图。
 
 ### 常用插件
 
-按场景推荐几类：
+常用插件可以按职责分为：
 
-- 框架集成：`@vitejs/plugin-vue`、`@vitejs/plugin-react`、`@vitejs/plugin-svelte`。
-- 跨工具复用：`unplugin-icons`、`unplugin-auto-import`、`unplugin-vue-components`，同一份逻辑可以复用到 Vite、Webpack、Rollup、Rolldown 等工具里。
-- 调试分析：`vite-plugin-inspect`（可视化插件钩子调用链）、`rollup-plugin-visualizer`（构建产物占比）。
-- 内置 Devtools：`devtools: true` 开启 `@vitejs/devtools`，从 dev server 直接看模块图、依赖、转换链。
+- 框架集成：`@vitejs/plugin-vue`、`@vitejs/plugin-react`、`@sveltejs/vite-plugin-svelte`；
+- 跨工具复用：`unplugin-icons`、`unplugin-auto-import`、`unplugin-vue-components`，可以在 Vite、Webpack、Rollup 和 Rolldown 等工具中复用插件逻辑；
+- 调试分析：`vite-plugin-inspect` 用于查看插件转换结果，`rollup-plugin-visualizer` 用于分析构建产物占比；
+- Vite DevTools：安装 `@vitejs/devtools` 并设置 `devtools: true` 后，可以查看内部状态和构建分析。该实验性能力目前只支持 build 模式。
 
 ### Module Federation
 
-Vite 本身不内置 Module Federation。需要远程模块加载时，可以通过 `@module-federation/vite` 接入，核心配置就是 remote 暴露什么，以及 host 从哪里消费。
+Vite 本身不提供开箱即用的 Module Federation 配置。需要跨应用暴露和加载模块时，可以接入 `@module-federation/vite`：remote 声明可暴露模块，host 配置远程入口和导入别名。
 
 remote 端负责暴露模块：
 
@@ -474,7 +443,7 @@ federation({
 
 然后在 host 里按「导入前缀/暴露模块名」导入：
 
-```tsx fold
+```tsx fold title="host/src/App.tsx"
 import RemoteButton from 'remoteApp/Button'
 
 export function App() {
@@ -484,8 +453,10 @@ export function App() {
 
 ## 总结
 
-Vite 的核心不是简单地"不打包"，而是把开发阶段和生产阶段拆成两套目标不同的链路。
+Vite 的核心不是“不打包”，而是为开发和生产提供目标不同的处理链路。
 
-开发阶段，dev server 把业务源码按浏览器请求逐个转换，依赖通过预构建和缓存提前稳定，模块图则负责记录转换结果、导入关系和 HMR 边界。生产阶段，Vite 回到完整构建流程，由 Rolldown 构建依赖图，再做 Tree Shaking、代码分块、资源哈希、压缩和预加载优化。
+开发阶段，dev server 按浏览器请求转换业务源码，依赖预构建合并裸模块请求。dev server 缓存避免重复转换，模块图记录转换结果、导入关系和 HMR 边界。
 
-插件机制把这两条链路连接起来：同一套 `resolveId`、`load`、`transform` 可以同时服务 dev 请求和 build 构建，但 dev server 中间件、HMR、构建产物输出又各有自己的钩子。理解这层边界后，就能解释为什么 Vite 开发体验很快，也能理解为什么关键改动仍然需要用 `vite build` 和 `vite preview` 验证生产产物。
+生产阶段，Rolldown 从入口构建完整依赖图，再执行 Tree Shaking、代码分块、资源哈希、压缩和预加载优化。
+
+`resolveId`、`load`、`transform` 等通用钩子可以同时服务两条链路，dev server 中间件、HMR 和产物生成则各有专属钩子。区分这些职责后，问题落在 dev 还是 build 链路，可以从钩子归属快速判断。
