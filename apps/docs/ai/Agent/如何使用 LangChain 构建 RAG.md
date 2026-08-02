@@ -1,6 +1,6 @@
 ---
 createdAt: '2026-06-23 00:00'
-order: 5
+order: 6
 ---
 
 # 如何使用 LangChain 构建 RAG

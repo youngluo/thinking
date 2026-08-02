@@ -1,6 +1,6 @@
 ---
 createdAt: '2026-06-30 20:00'
-order: 8
+order: 9
 ---
 
 # SDD 指南

@@ -1,19 +1,18 @@
 ---
-createdAt: '2026-07-12 11:08'
-draft: true
+createdAt: '2026-08-03 18:00'
 ---
 
 # Next.js 渲染机制
 
-本文从一次 App Router 页面请求出发，说明 HTML 与 RSC payload 的生成、传输和 Hydration，以及 Suspense 和组件边界在其中的作用。
+Next.js 是基于 React 的全栈 Web 框架，提供文件路由和服务端渲染等能力。本文以 App Router 的一次页面请求为线索，说明页面如何从服务端生成内容，并在浏览器中呈现和恢复交互。
 
 ## RSC 与 SSR 基础链路
 
-先看服务端如何把一次页面请求转换为两类产物：浏览器直接显示的 HTML，以及 React 客户端运行时消费的 RSC payload。
+一次页面请求会在服务端生成两类产物：浏览器直接显示的 HTML，以及 React 客户端运行时消费的 RSC payload。
 
 ### 从请求到服务端产物
 
-App Router 的首次渲染在服务端分两步完成：
+首次请求的服务端渲染主要包含两个阶段：
 
 1. React 执行匹配路由的 Server Component，将渲染结果编码为 RSC payload；
 2. Next.js 使用 RSC payload 和 Client Component 的模块信息预渲染 HTML，供浏览器直接显示首屏。
@@ -25,29 +24,29 @@ shape: sequence_diagram
 
 browser: 浏览器
 next: Next.js
-rsc: React Server
+rsc: React Server Components
 ssr: React DOM Server
 
 browser -> next: 请求 URL
 next -> rsc: 执行 Server Component
 rsc -> next: 生成 RSC payload
-next -> ssr: 结合 Client Component 预渲染
+next -> ssr: 结合 RSC payload 与 Client Component 模块信息预渲染 HTML
 ssr -> next: 生成 HTML
-next -> browser: 返回包含 HTML 与 RSC chunk 的响应
+next -> browser: 返回包含 HTML 与内嵌 RSC chunk 的响应
 ```
 
-RSC payload 是供 React 消费的数据格式，主要包含：
+RSC payload 是由 Server Components 生成的、供客户端 React 消费的数据格式，主要包含：
 
 - Server Component 的渲染结果；
 - Client Component 的模块引用和所在位置；
 - 传给 Client Component 的可序列化 props；
-- Suspense、异步数据和错误等信息。
+- Suspense 边界、异步数据和错误处理所需的信息。
 
 它描述的是组件树和边界信息，不是浏览器直接显示的 HTML，也不是让浏览器重新执行 Server Component 的源码。
 
 ### 首次响应中的 HTML 与 RSC payload
 
-以一个文章页面为例，`Page` 是 Server Component，`LikeButton` 是 Client Component：
+以一个文章页面为例，观察首次响应中 HTML 与 RSC payload 分别承载什么。`Page` 是 Server Component，`LikeButton` 是 Client Component：
 
 ```tsx fold title="app/article/[id]/page.tsx"
 import { LikeButton } from './like-button'
@@ -77,9 +76,9 @@ export function LikeButton({ count }: { count: number }) {
 }
 ```
 
-`Page` 在服务端执行并获取文章数据。RSC payload 保存 `Page` 的渲染结果，以及 `LikeButton` 的模块引用和 `count: 0`。SSR 再将同一份组件结果预渲染为 HTML，其中既有文章内容，也有按钮。
+假设文章当前有 0 个赞，`Page` 在服务端执行并获取文章数据。RSC payload 记录 `Page` 的渲染结果，并为 `LikeButton` 保留模块引用和 `count: 0` 这个 prop。Next.js 再结合这份 RSC payload 和 Client Component 的模块信息预渲染 HTML，其中既有文章内容，也有按钮。
 
-首次访问时，两份产物通常通过同一个 `text/html` 响应返回。HTML 以普通标签写入响应，RSC payload 被拆成 chunk，通过内联脚本写入 Next.js 的客户端数据队列：
+首次访问通常返回一个 `text/html` 响应，其中同时包含 HTML 和以 chunk 形式内嵌的 RSC payload：HTML 以普通标签写入响应，RSC chunk 则通过内联脚本写入 Next.js 的客户端数据队列。下面只截取与当前示例相关的片段：
 
 ```html
 <article>
@@ -93,17 +92,17 @@ export function LikeButton({ count }: { count: number }) {
 </script>
 ```
 
-这个响应同时携带可见内容和后续 Hydration 所需的数据。`self.__next_f` 是 Next.js 当前使用的传输实现，不属于 RSC 协议本身，因此理解机制时不需要把它当作稳定 API。
+这个响应同时携带首屏可见内容和后续 Hydration 所需的信息。`self.__next_f` 是 Next.js 当前使用的传输实现，不属于 RSC 协议本身，因此理解机制时不需要把它当作稳定 API。
 
 ### 嵌套布局如何进入 RSC payload
 
-一个 URL 通常会同时匹配页面和多层布局。以 `/blog/hello` 为例，`RootLayout`、`AppLayout`、`BlogLayout` 和 `BlogPage` 依次嵌套，它们的 Server Component 渲染结果都会进入当前路由的 RSC payload。
+RSC payload 不只包含页面内容，也包含当前路由上各级布局的渲染结果。假设访问 `/blog/hello` 时，路由依次经过 `RootLayout`、`AppLayout` 和 `BlogLayout`，最终渲染 `BlogPage`。App Router 会按路由层级将这些布局和页面组合成一棵组件树，并把它们的服务端渲染结果写入当前路由的 RSC payload。
 
-后续客户端导航只需请求目标路由的 RSC payload。Next.js 复用已加载的共享布局，再将新的路由段合并到现有组件树中。
+后续客户端导航时，Next.js 获取目标路由的 RSC payload，客户端复用已加载的共享布局，再将新的路由段合并到现有组件树中。
 
 ## Hydration
 
-上一节得到的是服务端产物，这一节看浏览器如何接手。服务端响应到达后，浏览器一边解析 HTML，一边收集 RSC chunk 并加载 Client Component JavaScript。Next.js 客户端运行时随后启动 Hydration，React 复用已有 DOM，并建立客户端状态和交互。下图按依赖关系展示这些交错进行的工作：
+服务端返回 HTML 和 RSC payload 后，浏览器开始接手这次渲染。浏览器先解析 HTML，内联脚本将 RSC chunk 交给 Next.js 客户端运行时，同时加载所需的 Client Component JavaScript。数据和模块准备完成后，Next.js 调用 `hydrateRoot`，React 复用已有 DOM，并建立客户端状态和交互。下图按依赖关系展示这段过程：
 
 ```d2 maxHeight=520
 shape: sequence_diagram
@@ -118,118 +117,103 @@ browser -> dom: 解析 HTML，生成并显示 DOM
 browser -> runtime: 执行内联脚本，写入 RSC chunk
 runtime -> flight: 交给 React Flight 解析 RSC chunk
 flight -> runtime: 返回 React 元素、数据与模块引用
-runtime -> reconciler: 调用 hydrateRoot，传入 Flight 返回结果
-reconciler -> reconciler: 为 Server Component 渲染结果创建 Host Fiber
+runtime -> reconciler: 调用 hydrateRoot，传入 RSC 还原的 React 元素
+reconciler -> reconciler: 开始遍历 React 元素树
 reconciler -> runtime: 根据引用加载 Client Component 模块
 runtime -> reconciler: 返回 Client Component 模块
 reconciler -> reconciler: 执行 Client Component，创建组件与 Host Fiber
-reconciler -> dom: Host Fiber 按顺序匹配已有 DOM
-reconciler -> dom: 关联 Fiber 与 DOM，保存事件 props
-reconciler -> browser: 关联 ref、执行 Effect，进入客户端更新
+reconciler -> dom: 按顺序匹配并关联已有 DOM
+reconciler -> browser: 关联 ref、执行 Effect，恢复客户端交互
 ```
 
-下面继续以 `LikeButton` 为例，把时序图中的流程对应到具体节点。
+下面仍以前面的 `Page` 和 `LikeButton` 为例，将时序图中的抽象流程对应到具体节点。
 
 ### 从 RSC payload 到可交互页面
 
-Hydration 开始时，浏览器需要组合三类内容：
+Hydration 要把服务端已经生成的 DOM 与 React 运行时所需的数据和组件逻辑连接起来。当前示例包含三类信息：
 
-- HTML 已经生成 `article`、`h1`、`p` 和 `button` DOM 元素；
-- RSC payload 包含 `Page` 的渲染结果、`LikeButton` 的模块引用和 `count: 0`；
+- 浏览器已经根据 HTML 生成 `article`、`h1`、`p` 和 `button` DOM 元素；
+- RSC payload 记录 `Page` 的渲染结果、`LikeButton` 的模块引用和 `count: 0`；
 - Client Component JavaScript 包含 `LikeButton` 的组件逻辑。
 
 页面此时已经可见，但浏览器中还没有 `LikeButton` 的 Hook 状态和点击处理逻辑。接下来，React 按以下过程把这三类内容连接起来：
 
-1. React Flight 解析 RSC chunk，还原 React 元素、数据和 Client Component 模块引用。RSC payload 不包含 Fiber，也不包含 `Page` 的组件函数，因此浏览器不会重新执行 `Page`。
-2. Next.js 根据模块引用加载 `LikeButton` 的客户端 JavaScript。
-3. Next.js 客户端运行时调用 `hydrateRoot`，Reconciler 开始 Hydrate。它遍历 `Page` 返回的 React 元素树：遇到 `article`、`h1`、`p` 等原生元素时创建对应的 Host Fiber；遇到 `LikeButton` 时先创建组件 Fiber，用 `count: 0` 调用组件函数，再为返回的 `button` 创建 Host Fiber。
-4. Reconciler 创建 Host Fiber 时尝试匹配已有 DOM。`article`、`h1`、`p` 和 `button` 的 Host Fiber 都与对应 DOM 节点建立关联。
-5. 提交阶段保存事件 props、关联 ref 并执行 Effect。`LikeButton` 组件 Fiber 保存 Hook 状态，`button` Host Fiber 保存 `onClick` 事件 props。此后点击按钮，`setLikes` 会更新状态并修改已复用 DOM 中的文本。
+1. React Flight 解析 RSC chunk，还原 React 元素、数据和 Client Component 模块引用。RSC payload 不包含 Fiber，也不包含 `Page` 的组件函数，因此浏览器不会重新执行 `Page`；
+2. Next.js 根据模块引用加载 `LikeButton` 的客户端 JavaScript；
+3. Next.js 客户端运行时调用 `hydrateRoot`，Reconciler 开始 Hydrate。它遍历 RSC payload 还原出的 React 元素树：遇到 `article`、`h1`、`p` 等原生元素时创建对应的 Host Fiber；遇到 `LikeButton` 时先创建组件 Fiber，用 `count: 0` 调用组件函数，再为返回的 `button` 创建 Host Fiber；
+4. Reconciler 创建 Host Fiber 时尝试匹配已有 DOM。`article`、`h1`、`p` 和 `button` 的 Host Fiber 都与对应 DOM 节点建立关联；
+5. Render 阶段，`LikeButton` 的组件 Fiber 创建 Hook 状态，`button` Host Fiber 记录 `onClick` 等 props；Commit 阶段，React 关联 ref、完成事件处理所需的信息并执行 Effect。此后点击按钮，`setLikes` 会更新状态并修改已复用 DOM 中的文本。
 
-Server Component 渲染结果和 Client Component 返回结果中的 Host Fiber，都使用同一套 DOM 复用逻辑；组件状态和交互能力来自 Client Component 在浏览器中的执行。
-
-也就是说，Hydration 不是把服务端 HTML 丢掉重来，而是在已有 DOM 上补齐 React 运行时需要的 Fiber、状态和事件信息。
+Server Component 生成的元素和 Client Component 返回的元素，都会参与同一套 DOM 匹配过程。Hook 状态和交互逻辑则来自 Client Component 在浏览器中的执行。
 
 ### Fiber 与 DOM 如何匹配
 
-React 按深度优先顺序遍历 Fiber 树，同时维护当前 DOM 位置。遍历到 Host Fiber 时，React 将它与下一个 DOM 节点进行匹配。
+Hydration 时，React 按深度优先顺序遍历 Fiber 树，并按相同顺序查找可以复用的 DOM 节点。只有 Host Fiber 对应实际的 DOM 节点，组件 Fiber 和 Fragment 不会单独消耗一个 DOM 节点。
 
-组件 Fiber 和 Fragment 没有自己的 DOM，因此不会让 DOM 的遍历位置前进。以 `Page + LikeButton` 为例，React 处理完 `article`、`h1` 和 `p` Host Fiber 后，遍历到 `LikeButton` 组件 Fiber，此时不移动 DOM 位置。继续处理它返回的 `button` Host Fiber 时，下一个 DOM 节点正好也是 `button`。
+以 `Page + LikeButton` 为例，React 处理完 `article`、`h1` 和 `p` Host Fiber 后，遍历到 `LikeButton` 组件 Fiber。这个组件 Fiber 不对应 DOM 节点，继续处理它返回的 `button` Host Fiber 时，React 才会匹配下一个 `button` DOM 节点。
 
-匹配时，React 先检查 DOM 节点的类型。Host Fiber 对应元素时，下一个 DOM 节点需要是相同标签的元素；Host Fiber 对应文本时，下一个 DOM 节点需要是文本节点。类型匹配后，React 建立 Fiber 与 DOM 的关联，再校验文本和属性是否一致。
+找到候选节点后，React 先检查 DOM 节点的类型。Host Fiber 对应元素时，候选节点需要是相同标签的元素；Host Fiber 对应文本时，候选节点需要是文本节点。类型匹配后，React 建立 Fiber 与 DOM 的关联，再校验文本和属性是否一致。
 
-因此，遍历顺序决定当前与哪个 DOM 节点匹配，节点类型决定能否匹配成功，文本和属性用于校验内容是否一致。
+整个匹配过程有三个关键点。遍历顺序决定匹配位置，节点类型决定能否复用，文本和属性用于校验内容。如果节点结构或内容无法与服务端结果对齐，就会出现 Hydration mismatch。
 
 ### Hydration mismatch
 
-客户端首次渲染的结构或文本与现有 DOM 不一致时，React 会报告 hydration mismatch，并尝试恢复受影响的部分。开发环境的控制台会显示差异；页面可能出现内容切换，DOM 重建时还可能丢失焦点或未提交的输入。属性不一致时，React 通常只在开发环境给出警告，DOM 可能继续保留服务端生成的属性值。
+Hydration mismatch 表示客户端首次渲染的结构或文本无法与服务端生成的 DOM 对齐。React 会报告差异，并尝试恢复受影响的部分。开发环境的控制台会显示具体差异；如果受影响的 DOM 被替换，页面内容可能切换，输入焦点或尚未提交的内容也可能丢失。属性不一致时，React 通常只在开发环境给出警告，服务端生成的属性值可能继续保留。
 
 常见原因：
 
-- **浏览器专属数据**：首次渲染读取 `localStorage`、视口宽度等数据，服务端无法获得相同结果。
-- **非稳定值**：在渲染过程中调用 `Date.now()`、`Math.random()`，两次渲染得到不同内容。
-- **环境差异**：日期、数字等内容依赖时区或语言环境，服务端与浏览器的格式化结果不同。
-- **条件渲染不同**：使用 `typeof window !== 'undefined'` 等条件，让服务端与浏览器返回不同的 JSX。
+- **浏览器专属数据**：首次渲染读取 `localStorage`、视口宽度等数据，服务端无法获得相同结果；
+- **非稳定值**：在渲染过程中调用 `Date.now()`、`Math.random()`，两次渲染得到不同内容；
+- **环境差异**：日期、数字等内容依赖时区或语言环境，服务端与浏览器的格式化结果不同；
+- **条件渲染不同**：使用 `typeof window !== 'undefined'` 等条件，让服务端与浏览器返回不同的 JSX；
 - **HTML 结构变化**：非法嵌套被浏览器自动调整，或第三方脚本、浏览器扩展在 Hydration 前修改了 DOM。
 
-修复的核心是保证服务端与客户端的首次渲染结果一致。对于 `localStorage` 等浏览器专属数据，可以先渲染稳定的默认内容，再在 `useEffect` 中读取并更新：
+要避免 Hydration mismatch，服务端与客户端的首次渲染结果必须保持一致。对于 `localStorage` 等浏览器专属数据，可以先渲染稳定的默认内容，再在 `useEffect` 中读取并更新。
 
-```tsx fold title="components/theme-label.tsx"
-'use client'
-
-import { useEffect, useState } from 'react'
-
-export function ThemeLabel() {
-  const [theme, setTheme] = useState<'light' | 'dark'>('light')
-
-  useEffect(() => {
-    if (localStorage.getItem('theme') === 'dark') {
-      setTheme('dark')
-    }
-  }, [])
-
-  return <p>当前主题：{theme === 'dark' ? '深色' : '浅色'}</p>
-}
-```
-
-服务端预渲染和浏览器首次渲染都会输出「浅色」，Hydration 完成后再根据 `localStorage` 更新。
-
-对于时间戳等无法避免的单个元素差异，可以使用 `suppressHydrationWarning`。它只关闭当前元素的 Hydration 警告，不会递归作用于后代节点，也不会修正不一致的文本：
+如果某个元素的差异无法避免，可以使用 `suppressHydrationWarning`。它只对当前元素生效，不会递归作用于后代节点，也不会修正不一致的文本：
 
 ```tsx fold
 <time dateTime={post.publishedAt} suppressHydrationWarning>
+  {/* 服务端与浏览器的时区、语言环境可能不同，导致文本不一致 */}
   {new Date(post.publishedAt).toLocaleString()}
 </time>
 ```
 
 ## Suspense 边界
 
-Suspense 边界把组件树划分为可以独立等待和恢复的区域。服务端以它为单位分批输出 HTML，客户端以它为单位调度 Hydration。
+前面介绍的是响应完整到达后，React 如何复用 HTML 并完成 Hydration。这里进一步说明响应分批到达时，Suspense 边界如何组织异步内容，以及它对 HTML 输出和 Hydration 的影响。
 
 ### Streaming HTML
 
-前面讲述的 Hydration 流程是从浏览器收到完整响应开始的。实际渲染中，组件可能因等待数据而挂起；如果等整棵组件树渲染完成后才响应，那么其它内容就会被阻塞。为避免这种情况，React 以 Suspense 边界划分渲染任务，先输出已完成部分的 HTML 和 fallback，待 Suspense 边界内的内容完成后再继续输出。这一过程称为 Streaming HTML。整体时序如下：
+当某个组件因等待数据而挂起时，如果服务端等到整棵组件树完成后才发送响应，已经完成的内容也会被一起延后。Suspense 边界允许服务端先发送已完成部分的 HTML 和 fallback，待边界内的数据就绪后，再发送边界 HTML 和替换 fallback 所需的指令。这种逐步发送 HTML 的过程称为 Streaming HTML。时序图展示了首批响应、边界内容到达以及 fallback 被替换的过程：
 
-```d2 maxHeight=560
+```d2 maxHeight=500
 shape: sequence_diagram
 
 server: 服务端
 browser: 浏览器
 runtime: Next.js 客户端运行时
+flight: React Flight
 react: React
 dom: DOM
 
 server -> server: 组件等待数据，Suspense 边界挂起
-server -> browser: 发送首批 HTML、fallback 与 RSC chunk
+server -> browser: 发送已渲染 HTML、fallback 与首批 RSC chunk
 browser -> dom: 解析 HTML，显示已有内容
-browser -> runtime: 执行内联脚本，提交 RSC chunk
-runtime -> react: 解析 RSC chunk，Hydrate 已就绪内容
+browser -> runtime: 执行内联脚本，提交首批 RSC chunk
+runtime -> flight: 解析首批 RSC chunk
+flight -> react: 提供已还原的 React 元素
+react -> dom: Hydrate 已就绪的 Client Component
 server -> server: 数据就绪，继续渲染 Suspense 边界内容
-server -> browser: 发送 Suspense 边界内的 HTML 与 RSC chunk
+server -> browser: 发送边界 HTML、RSC chunk 与插入指令
 browser -> runtime: 执行流中的插入指令
-runtime -> dom: 根据 Suspense 边界标记替换 fallback
-runtime -> react: 解析新增数据，Hydrate Suspense 边界
+runtime -> dom: 用边界 HTML 替换 fallback
+runtime -> flight: 解析新增 RSC chunk
+flight -> react: 提供边界内的 React 元素
+react -> dom: Hydrate 边界内的 Client Component
 ```
+
+下面通过一个页面示例具体说明这个过程。假设 `PostList` 是一个渲染时需要等待数据的 Server Component。
 
 ```tsx fold title="app/page.tsx"
 import { Suspense } from 'react'
@@ -238,7 +222,8 @@ export default function Page() {
   return (
     <>
       <h1>博客</h1>
-      <Suspense fallback={<p>正在加载...</p>}>
+      <p>最新文章</p>
+      <Suspense fallback={<p>正在加载文章...</p>}>
         <PostList />
       </Suspense>
     </>
@@ -248,41 +233,41 @@ export default function Page() {
 
 以这个 `Page` 为例，首次请求的处理过程如下：
 
-1. 服务端先完成 `<h1>`，渲染到 `PostList` 时因等待数据而挂起，React 记录这个尚未完成的 Suspense 边界。
-2. Suspense 输出 `<p>正在加载...</p>`，服务端继续处理 Suspense 边界外的内容。浏览器收到首批结果后，先显示「博客」和「正在加载...」。
-3. 数据就绪后，服务端继续渲染 `PostList`，将 Suspense 边界内的 HTML、RSC chunk 和插入指令写入同一个响应。
-4. 客户端运行时根据 Suspense 边界标记，用 `PostList` 的 HTML 替换加载提示。若其中包含 Client Component，这段 HTML 也包含其服务端预渲染结果。
-5. React Flight 解析新增的 RSC chunk。客户端代码就绪后，React 继续 Hydrate 这个 Suspense 边界，让 Host Fiber 匹配刚插入的 DOM；若其中包含 Client Component，再执行其客户端代码并恢复交互。
+1. 服务端先完成 Suspense 边界外的 `<h1>` 和 `<p>`，渲染到 `PostList` 时因等待数据而挂起，React 记录这个尚未完成的 Suspense 边界；
+2. Suspense 输出 `<p>正在加载文章...</p>` 作为首批 HTML 的一部分。浏览器收到首批结果后，先显示「博客」「最新文章」和「正在加载文章...」；
+3. 数据就绪后，服务端继续渲染 `PostList`，将 Suspense 边界内的 HTML、RSC chunk 和插入指令写入同一个响应；
+4. 浏览器执行响应中附带的内联指令，用 `PostList` 的 HTML 替换加载提示。这一步不必等待 React 客户端代码加载，页面可以先显示完整内容；
+5. Next.js 客户端运行时将新增的 RSC chunk 交给 React Flight 解析。若边界内包含 Client Component，待其客户端代码加载后，React 才会继续 Hydrate 这个边界，让 Host Fiber 匹配刚插入的 DOM，并恢复交互。
 
-整个过程仍发生在同一次 HTTP 响应中，也只调用一次 `hydrateRoot`。
+这个过程仍发生在同一次 HTTP 响应中，Next.js 只需在应用根节点调用一次 `hydrateRoot`。
 
 ### Selective Hydration
 
-Suspense 边界也是客户端 Hydration 的调度单元。React 可以跳过尚未就绪的 Suspense 边界，先 Hydrate 其它内容。
+Streaming HTML 负责让边界内容分批到达浏览器，Selective Hydration 则负责安排这些内容何时变得可交互。当某个 Suspense 边界的 HTML、RSC 数据或 Client Component 代码尚未准备好时，React 可以暂缓这个边界，先 Hydrate 其它已经具备条件的内容。
 
-多个 Suspense 边界同时就绪时，React 会按优先级调度。如果用户在尚未 Hydrate 的 Suspense 边界内交互（如点击、聚焦），React 会强制 hydrate 该边界及其父级 Suspense 边界。
+多个 Suspense 边界同时具备 Hydration 条件时，React 会按优先级调度。如果用户在尚未 Hydrate 的边界内点击，React 会提高包含交互目标的边界优先级，优先完成该边界的 Hydration，再处理这次交互。
 
-Streaming HTML 让页面不必等全部 HTML 才能显示，Selective Hydration 让页面不必等整棵树 Hydrate 才能交互。两者都以 Suspense 边界为工作单元，前者控制服务端输出，后者调度客户端 Hydration。
+因此，页面可以在全部 HTML 到达前开始显示，也可以在整棵树 Hydrate 完成前响应用户交互。
 
 ### loading.tsx
 
-`loading.tsx` 是 Next.js 提供的路由级 Suspense 边界，会自动包裹同一路由段的页面及其子级。手写 `<Suspense>` 用于继续拆分页面内的异步区域。两者同时存在时，组件挂起后由离它最近的 Suspense 边界显示 fallback。
+`loading.tsx` 是 Next.js 提供的路由级加载约定。框架会在对应路由段自动创建 Suspense 边界，并将 `loading.tsx` 返回的 UI 作为 fallback，用来包裹页面及其子级。手写 `<Suspense>` 可以继续拆分页面内部的异步区域，提供更细粒度的 fallback。两者同时存在时，组件挂起后由离它最近的 Suspense 边界显示 fallback。
 
 ## 组件边界
 
-前文讲 Hydration 和 Suspense 时已经触及两类组件。本节回到代码层面，看哪些模块进入客户端，两端组件如何在树中组合。
+前文已经从渲染流程中看到 Server Component 和 Client Component 的分工。下面回到代码层面，看看客户端边界如何形成，以及两类组件如何组合。
 
 ### 边界如何形成
 
-App Router 中的组件默认是 Server Component。文件顶部使用 `'use client'` 会声明一个客户端入口，该文件及其依赖会进入客户端模块图。只有需要状态、事件、Effect 或浏览器 API 的入口才需要添加这个指令。
+App Router 中的组件默认是 Server Component。如果组件需要状态、事件处理、Effect 或浏览器 API 等客户端能力，就需要在文件顶部添加 `'use client'`。这个指令会将该文件标记为 Client Component 入口，并将该文件及其依赖纳入客户端模块图，客户端边界也由此形成。
 
-优先把边界贴近交互发生的位置。例如，布局中的 Logo 和导航结构可以保留为 Server Component，只有搜索框标记为 Client Component。边界越靠上，需要发送和执行的客户端 JavaScript 通常越多。
+因此，应尽量把边界贴近交互发生的位置。例如，布局中的 Logo 和导航结构可以保留为 Server Component，只把搜索框标记为 Client Component。边界放得越靠上，纳入客户端模块图的代码通常越多，需要发送和执行的客户端 JavaScript 也越多。
 
 ### 组件如何跨越边界
 
-Server Component 可以直接渲染 Client Component，并通过 props 传递数据。这些 props 需要能被 React 序列化；函数等普通 JavaScript 引用不能直接跨越边界，Server Function 除外。
+Server Component 可以渲染 Client Component。跨边界传递的数据会通过 props 进入 Client Component，因此这些 props 必须能被 React 序列化。普通函数不能直接跨越边界，Server Function 除外。
 
-Client Component 不能把依赖服务端能力的模块作为普通依赖引入。需要在 Client Component 内展示 Server Component 时，应由上层 Server Component 完成组合，再通过 `children` 等 props 传入：
+Client Component 不能直接导入 Server Component，也不能把依赖服务端能力的模块作为普通依赖引入。如果 Client Component 需要包含 Server Component 的内容，应由上层 Server Component 负责组合，再通过 `children` 等 props 传入：
 
 ```tsx fold title="app/page.tsx"
 import { Cart } from './cart'
@@ -297,11 +282,13 @@ export default function Page() {
 }
 ```
 
-这里 `Modal` 是 Client Component，`Cart` 仍由服务端渲染。`Modal` 只负责交互和展示 `children`，不会把 `Cart` 变成 Client Component。
+在这个例子中，`Page` 是 Server Component，负责组合 `Modal` 和 `Cart`。`Modal` 只负责交互和展示 `children`，`Cart` 仍由服务端渲染，不会因为作为 `children` 传入而变成 Client Component。
 
 ### 特殊边界
 
-`server-only` 和 `client-only` 用于限制模块的运行环境。例如，数据库模块只能被服务端模块引用：
+除了通过 `'use client'` 建立组件边界，还可以通过模块标记限制运行环境，或通过动态导入跳过服务端预渲染。
+
+`server-only` 和 `client-only` 用于限制模块的运行环境。数据库模块只能被服务端模块引用：
 
 ```ts fold title="lib/db.ts"
 import 'server-only'
@@ -321,7 +308,7 @@ export const readTheme = () => localStorage.getItem('theme')
 
 模块被错误环境引用时，Next.js 会在构建阶段报错。
 
-依赖状态、Effect 或浏览器 API，但没有声明 `'use client'` 的第三方组件，可以用 Client Component 包装：
+依赖状态、Effect 或浏览器 API，但没有声明 `'use client'` 的第三方组件，可以通过一个 Client Component 包装后再引入：
 
 ```tsx fold title="components/carousel.tsx"
 'use client'
@@ -329,7 +316,7 @@ export const readTheme = () => localStorage.getItem('theme')
 export { Carousel as default } from 'acme-carousel'
 ```
 
-组件强依赖 `window`、`document`，无法参与服务端预渲染时，可以在 Client Component 中使用 `next/dynamic` 并配置 `ssr: false`，让它只在浏览器加载后渲染：
+如果组件强依赖 `window`、`document`，只能在浏览器中运行，可以在 Client Component 中使用 `next/dynamic` 并配置 `ssr: false`，让它跳过服务端预渲染，在浏览器加载后再渲染：
 
 ```tsx fold title="components/article-editor.tsx"
 'use client'
@@ -341,7 +328,7 @@ export const ArticleEditor = dynamic(() => import('./editor'), { ssr: false })
 
 ## 总结
 
-Next.js App Router 的首次渲染依赖三类信息：HTML 提供首屏可见内容，RSC payload 记录 Server Component 的渲染结果和 Client Component 的模块引用与位置，Client Component JavaScript 在 Hydration 后恢复状态、事件和 Effect。Suspense 把这条链路拆成可独立推进的段落：服务端通过 Streaming HTML 先发送已完成内容，客户端通过 Selective Hydration 优先恢复就绪或正在交互的区域。组件边界决定代码运行在哪一侧，默认保持 Server Component，只把真正需要交互和浏览器能力的部分放进客户端，渲染链路因此更清晰，客户端 JavaScript 也会更少。
+Next.js App Router 的渲染由服务端和客户端共同完成。服务端生成 HTML 和 RSC payload，让浏览器先显示页面；Client Component JavaScript 加载后，React 通过 Hydration 恢复状态和交互。Suspense 边界让 HTML 输出和 Hydration 可以分段推进，组件边界则控制客户端模块图的范围。这几部分共同构成了 App Router 从请求到可交互页面的基本渲染过程。
 
 ## 参考资料
 
