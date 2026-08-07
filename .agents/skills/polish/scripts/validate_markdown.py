@@ -29,6 +29,8 @@ def validate_title(errors: list[str], path: Path, line: int, title: str) -> None
         fail(errors, path, line, "标题不能带序号")
     if "`" in value:
         fail(errors, path, line, "标题不能使用反引号")
+    if ":" in value or "：" in value:
+        fail(errors, path, line, "标题不能使用冒号")
     if any(character in value for character in DASH_CHARACTERS):
         fail(errors, path, line, "标题不能使用破折号")
 
@@ -120,7 +122,7 @@ def validate(path: Path) -> list[str]:
         if any(character in line for character in DASH_CHARACTERS):
             fail(errors, path, number, "正文不能使用破折号")
         if "其他" in line:
-            fail(errors, path, number, "统一使用“其它”，不要使用“其他”")
+            fail(errors, path, number, "统一使用“其它”")
         heading_match = HEADING_RE.match(line)
         if not heading_match:
             continue

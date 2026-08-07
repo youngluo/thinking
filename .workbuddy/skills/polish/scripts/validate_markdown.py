@@ -29,6 +29,8 @@ def validate_title(errors: list[str], path: Path, line: int, title: str) -> None
         fail(errors, path, line, "标题不能带序号")
     if "`" in value:
         fail(errors, path, line, "标题不能使用反引号")
+    if ":" in value or "：" in value:
+        fail(errors, path, line, "标题不能使用冒号")
     if any(character in value for character in DASH_CHARACTERS):
         fail(errors, path, line, "标题不能使用破折号")
 
