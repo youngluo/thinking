@@ -6,93 +6,98 @@ draft: true
 
 # CopilotKit 介绍与快速入门
 
-## 先说清楚 CopilotKit 是什么
+## CopilotKit 是什么
 
-CopilotKit 是一套面向 React 的开源框架，把 AI Agent 作为一层织进应用的界面和状态。官方的定位是 agent 的前端栈（the frontend stack for agents）：聊天界面、生成式 UI、应用状态共享、人在回路这些做助手必需的通用件，框架直接做好。具体要补齐哪些、为什么裸调 API 很麻烦，下一节拆开讲。
+CopilotKit 是一套面向 React 应用的开源框架，用于把 AI Agent 接入应用界面。官方将它定位为 Agent 的前端栈（the frontend stack for agents），提供聊天界面、生成式 UI、应用上下文、工具调用和人在回路等通用能力。
 
 ### 要解决的问题
 
-直接调一次 LLM 接口，你拿到的只是一段文本。要做出能用的助手，还得自己补齐这些部分：
+直接调用 LLM API 只解决模型推理与输出，不会自动提供应用内的交互层。要做出能操作应用的助手，还需要补齐以下部分：
 
-- **聊天界面**：输入框、消息列表、打字态、错误提示；
-- **流式渲染**：把模型逐字输出实时画到界面上；
-- **状态共享**：把“当前页面有什么”告诉模型，让它的回答基于真实上下文；
-- **函数调用**：让模型反过来改你的状态、发请求、跳转页面；
-- **生成式 UI**：把模型返回的结构渲染成真实组件，而不是一段 Markdown；
-- **人在回路**：遇到需要确认的步骤，让 Agent 暂停等用户拍板。
+- **聊天界面**：输入框、消息列表、生成状态和错误提示；
+- **流式渲染**：持续接收模型输出并更新界面；
+- **应用上下文**：让 Agent 知道当前页面、用户和业务数据；
+- **工具调用**：让 Agent 修改前端状态或调用后端服务；
+- **生成式 UI**：把结构化结果渲染成 React 组件；
+- **人在回路**：在关键操作前暂停，等待用户确认。
 
-这些活儿和你的业务无关，却是每个 copilot 都绕不开的。CopilotKit 把它们打包好，你只声明“应用有哪些状态、有哪些可调用动作”，其余的交给框架。
+这些能力与具体业务关系不大，却是应用内 Agent 的共同基础。CopilotKit 负责连接界面、运行时和 Agent，你只需要声明应用提供的上下文与工具。
 
-### 心智模型
+### 工作方式
 
-CopilotKit 分三段，各管一摊：
+CopilotKit 的主要链路分为三部分：
 
-- **前端**：React 组件负责聊天 UI 和会话状态；
-- **Runtime**：后端的一个 endpoint，负责和 LLM / Agent 通信、转发 tool 调用、做流式传输；
-- **LLM / Agent 后端**：真正跑模型的引擎，OpenAI 或任意 AG-UI 兼容后端都行。
+- **React 前端**：展示聊天界面，提供应用上下文和前端工具；
+- **Copilot Runtime**：部署在服务端，负责认证、路由和事件转发；
+- **Agent**：可以使用 Runtime 内置的 `BuiltInAgent`，也可以接入兼容 AG-UI 协议的外部 Agent。
 
-三段各自负责一块，协作关系如下：
+使用 `BuiltInAgent` 时，Agent 由 Runtime 承载并直接调用模型。使用外部 Agent 时，Runtime 通过 AG-UI 协议转发消息、上下文、工具定义和流式事件。整体链路如下：
 
 ```d2
-reactApp: 你的 React 应用
+reactApp: React 应用
 provider: CopilotKit Provider
-runtime: Copilot Runtime (API 路由)
-backend: LLM / Agent 后端
+runtime: Copilot Runtime
+agent: Built-in Agent / AG-UI Agent
+model: 模型服务
 
-reactApp -> provider: 1. 消息 + 应用状态
-provider -> runtime: 2. HTTP 请求
-runtime -> backend: 3. 模型调用 / 执行 tool
-backend -> runtime: 4. 流式响应 (SSE)
-runtime -> provider: 5. 转发流
-provider -> reactApp: 6. 渲染回复 / 生成式 UI
+reactApp -> provider: 1. 消息 + 应用上下文 + 前端工具
+provider -> runtime: 2. 发起请求
+runtime -> agent: 3. 路由到 Agent
+agent -> model: 4. 调用模型
+model -> agent: 5. 返回文本或工具调用
+agent -> runtime: 6. 输出 AG-UI 事件流
+runtime -> provider: 7. 转发事件流
+provider -> reactApp: 8. 更新界面或执行前端工具
 ```
 
-一次对话的链路：用户在聊天界面输入 → Provider 带着应用状态发到 runtime → runtime 调用 LLM 并转发 tool 执行 → 响应以 SSE 流式回传 → Provider 渲染成文本或组件。
+工具的执行位置取决于注册方式。前端工具在浏览器中执行，Server Tool 和 MCP Tool 则由服务端 Agent 调用。
 
-## 核心能力
+### 核心能力
 
-- **聊天界面**：自带聊天、弹窗、侧边栏三种形态，样式能直接覆盖；
-- **生成式 UI**：把应用状态共享给 Agent、让 Agent 能调用你的函数，回复直接渲染成真实组件；
-- **后端 tool**：支持 Server Tools、MCP Server，让 Agent 能查库、写数据；
-- **人在回路**：Agent 执行到需要确认的步骤时暂停，等用户决策后再继续；
-- **后端可插拔**：默认就有 Built-in Agent 起步，也能接 LangGraph、Mastra、CrewAI、Claude Agent SDK 等任意 AG-UI 兼容后端。
+- **预置聊天界面**：提供聊天、弹窗和侧边栏组件，并支持样式定制；
+- **应用上下文**：把页面状态、用户信息等数据提供给 Agent；
+- **工具与生成式 UI**：允许 Agent 调用前端或后端工具，并用 React 组件展示结构化结果；
+- **人在回路**：执行关键操作前暂停，由用户确认后继续；
+- **可插拔后端**：既能使用 Built-in Agent，也能接入 LangGraph、Mastra、CrewAI 等兼容 AG-UI 的 Agent 后端。
 
-## 核心概念
+### 核心概念
 
-- **CopilotKit Provider**：用 `runtimeUrl` 指向后端 runtime，包裹整个应用并管理会话；
-- **Copilot Runtime**：后端的 endpoint，把前端请求转给模型、转发 tool 并执行流式传输；
-- **三个 UI 原语**：`CopilotChat`（聊天）、`CopilotPopup`（弹窗）、`CopilotSidebar`（侧边栏）；
-- **两个 Hook**：`useCopilotReadable`（声明 Agent 能读到的状态）、`useCopilotAction`（声明 Agent 能调用的函数）。
+- **CopilotKit Provider**：包裹 React 应用，通过 `runtimeUrl` 连接 Runtime，并向组件树提供会话能力；
+- **Copilot Runtime**：部署在服务端的运行时，负责认证、Agent 路由和流式事件转发；
+- **Built-in Agent**：CopilotKit 内置的 Agent，适合直接连接模型并快速搭建聊天与工具调用；
+- **UI 组件**：`CopilotChat`、`CopilotPopup` 和 `CopilotSidebar` 分别提供聊天、弹窗和侧边栏形态；
+- **前端 Hooks**：`useAgentContext` 向 Agent 提供只读上下文，`useFrontendTool` 注册可在浏览器中执行的工具。
 
 :::tip 示例版本
-示例基于 CopilotKit v2（import 路径带 `/v2`）。旧版本里 `CopilotChat` 等 UI 组件在 `@copilotkit/react-ui` 包，迁移时按项目实际版本对照官方说明。
+CopilotKit v2 目前还不是包的默认入口。安装时使用不带版本后缀的包名，代码则需要显式从 `/v2` 子路径导入。本文的前端 API 来自 `@copilotkit/react-core/v2`，Runtime API 来自 `@copilotkit/runtime/v2`。旧版本的 UI 组件位于 `@copilotkit/react-ui`，迁移时需要对照官方说明调整导入路径和 Hooks。
 :::
 
-## 优势
+### 主要优势
 
-和“自己从零写”或“裸调 API”相比，CopilotKit 的价值在这几处：
+与自行实现整套 Agent 交互相比，CopilotKit 的主要价值在于减少通用基础设施：
 
-- **省掉通用件**：聊天 UI、流式渲染、状态同步、工具调用协议都不用自己造；
-- **组件默认就能用**：样式和交互都齐了，要改也能按你的设计语言来；
-- **生成式 UI 是原生支持**：模型返回的结构直接渲染成组件，不用自己拼 Markdown；
-- **前端与后端解耦**：同一套前端能接不同 Agent 后端，换引擎不必动 UI；
-- **AG-UI 标准化**：agent 与前端的通信走 AG-UI 协议，便于接社区生态（MCP、各类框架）。
+- **降低接入成本**：聊天 UI、流式事件、上下文和工具协议可以直接复用；
+- **保留定制空间**：预置组件可以直接使用，也能按应用的设计语言调整；
+- **统一前后端通信**：前端通过同一套 API 对接不同 Agent，降低更换后端实现的成本；
+- **接入 AG-UI 生态**：兼容 AG-UI 协议的 Agent 后端可以复用同一套前端能力。
 
 ## 快速入门
 
-下面用 Next.js（App Router）走一遍，任意 React 前端都适用，已有项目可跳过创建步骤。完成后你会得到一个侧边栏聊天，能直接和模型对话。
+下面使用 Next.js App Router 搭建一个侧边栏助手。完成基础对话后，再逐步让 Agent 读取页面状态并调用前端工具。
 
 ### 准备工作
 
-- **OpenAI API Key**：用于调用模型（也支持 Anthropic / Google，见官方 Model Selection）；
+- **OpenAI API Key**：用于调用模型，也可以改用 Anthropic 或 Google；
 - **Node.js 20+**；
-- **一个 React 或 Next.js 项目**。
+- **一个 Next.js 项目**。
 
 ### 安装依赖
 
 ```bash fold
-npm install @copilotkit/react-core @copilotkit/react-ui @copilotkit/runtime
+npm install @copilotkit/react-core @copilotkit/react-ui @copilotkit/runtime zod
 ```
+
+本文仍按官方 Quickstart 安装三个 CopilotKit 包。v2 的 Provider、Hooks 和 UI 组件从 `@copilotkit/react-core/v2` 导入，Zod 用于定义前端和后端工具的参数结构。
 
 ### 配置环境变量
 
@@ -100,41 +105,40 @@ npm install @copilotkit/react-core @copilotkit/react-ui @copilotkit/runtime
 OPENAI_API_KEY=your_openai_api_key
 ```
 
+API Key 只保存在服务端环境变量中，不要写入前端代码或提交到仓库。
+
 ### 配置 Copilot Runtime
 
-新建一个 API 路由，用 `BuiltInAgent` + `CopilotRuntime` 起一个后端 endpoint。`BuiltInAgent` 是 CopilotKit 内置的 agent，不需要你再单独起一个 agent 服务，所以这一步就能直接跑通模型对话：
+新建一个全路径捕获 API 路由，用 `BuiltInAgent` 和 `CopilotRuntime` 创建后端 Runtime。`BuiltInAgent` 可以直接连接模型，不需要额外启动 Agent 服务：
 
-```ts title="app/api/copilotkit/route.ts" fold
+```ts title="app/api/copilotkit/[...path]/route.ts" fold
 import {
+  BuiltInAgent,
   CopilotRuntime,
-  copilotRuntimeNextJSAppRouterEndpoint,
-} from "@copilotkit/runtime";
-import { BuiltInAgent } from "@copilotkit/runtime/v2";
-import { NextRequest } from "next/server";
-
-const builtInAgent = new BuiltInAgent({
-  model: "openai:gpt-5.4-mini",
-});
+  createCopilotRuntimeHandler,
+} from "@copilotkit/runtime/v2";
 
 const runtime = new CopilotRuntime({
-  agents: { default: builtInAgent },
+  agents: {
+    default: new BuiltInAgent({
+      model: "openai:gpt-5.4-mini",
+    }),
+  },
 });
 
-export const POST = async (req: NextRequest) => {
-  const { handleRequest } = copilotRuntimeNextJSAppRouterEndpoint({
-    runtime,
-    endpoint: "/api/copilotkit",
-  });
+const handler = createCopilotRuntimeHandler({
+  runtime,
+  basePath: "/api/copilotkit",
+});
 
-  return handleRequest(req);
-};
+export { handler as GET, handler as POST };
 ```
 
-`model` 写成 `<provider>:<model>`，换成你账号里可用的模型即可（见官方 Model Selection）。
+这里把 Agent 注册为 `default`，预置聊天组件会自动使用它。`model` 采用 `<provider>:<model>` 格式，可以替换成当前账号可用的模型。
 
 ### 包裹 CopilotKit Provider
 
-在根布局里用 `CopilotKit` 包裹应用，并通过 `runtimeUrl` 指向上一步的 endpoint：
+在根布局中用 `CopilotKit` 包裹应用，并通过 `runtimeUrl` 指向上一步创建的 Runtime：
 
 ```tsx title="app/layout.tsx" fold
 import { CopilotKit } from "@copilotkit/react-core/v2";
@@ -147,7 +151,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
+    <html lang="zh-CN">
       <body>
         <CopilotKit runtimeUrl="/api/copilotkit">{children}</CopilotKit>
       </body>
@@ -158,7 +162,7 @@ export default function RootLayout({
 
 ### 添加聊天界面
 
-在页面里放一个 `CopilotSidebar`，聊天 UI 就出现了：
+在页面中添加 `CopilotSidebar`，即可得到一个带开关按钮的侧边栏聊天界面：
 
 ```tsx title="app/page.tsx" fold
 import { CopilotSidebar } from "@copilotkit/react-core/v2";
@@ -173,76 +177,83 @@ export default function Page() {
 }
 ```
 
-想要聊天而不是侧边栏，把 `CopilotSidebar` 换成 `CopilotChat` 即可。
+如果需要常驻聊天区域或弹窗，可以分别改用 `CopilotChat` 或 `CopilotPopup`。
 
-### 启动
+### 启动项目
 
 ```bash fold
 npm run dev
 ```
 
-打开页面，在侧边栏里直接对话，模型会流式回复。到这一步，你已经有一个能用的对话 MVP。
+打开页面后即可在侧边栏中对话，模型回复会通过 Runtime 以事件流返回。如果连接失败，优先检查 API Key 是否生效，以及 `runtimeUrl`、`basePath` 和 API 路由路径是否一致。
 
-如果连不上，优先检查 `.env` 里的 key 是否生效、`runtimeUrl` 是否与路由路径一致，必要时把 `localhost` 换成 `127.0.0.1`。
+### 共享应用状态
 
-### 让 Agent 看到应用状态
-
-光有对话，Agent 还不知道你的页面上有什么。用 `useCopilotReadable` 把状态共享给它，回答才能基于真实上下文：
+基础对话跑通后，可以使用 `useAgentContext` 把页面状态作为只读上下文提供给 Agent。上下文会随 React 状态更新，但 Agent 不能直接修改它：
 
 ```tsx title="app/page.tsx" fold
-import { useCopilotReadable } from "@copilotkit/react-core/v2";
+"use client";
+
+import { useAgentContext } from "@copilotkit/react-core/v2";
 import { useState } from "react";
 
 export default function Page() {
-  const [todos, setTodos] = useState<string[]>([]);
+  const [todos] = useState<string[]>([]);
 
-  useCopilotReadable({
+  useAgentContext({
     description: "当前待办列表",
     value: todos,
   });
 
-  return <main>{/* ... */}</main>;
+  return <main>{todos.join("、")}</main>;
 }
 ```
 
-### 让 Agent 调用你的函数
+传入的 `value` 必须是可序列化数据。适合共享当前用户、页面信息、筛选条件和业务数据等上下文。
 
-用 `useCopilotAction` 注册 Agent 可调用的方法，比如“加一条待办”：
+### 注册前端 Tool
+
+如果需要让 Agent 修改页面状态，可以使用 `useFrontendTool` 注册在浏览器中执行的工具。下面的 `addTodo` 接收一段文本并更新待办列表：
 
 ```tsx title="app/page.tsx" fold
-import { useCopilotAction } from "@copilotkit/react-core/v2";
+"use client";
+
+import { useFrontendTool } from "@copilotkit/react-core/v2";
+import { useState } from "react";
+import { z } from "zod";
 
 export default function Page() {
   const [todos, setTodos] = useState<string[]>([]);
 
-  useCopilotAction({
+  useFrontendTool({
     name: "addTodo",
     description: "新增一条待办",
-    parameters: [
-      { name: "text", type: "string", description: "待办内容", required: true },
-    ],
-    handler: ({ text }) => {
+    parameters: z.object({
+      text: z.string().describe("待办内容"),
+    }),
+    handler: async ({ text }) => {
       setTodos((prev) => [...prev, text]);
+      return "待办已添加";
     },
   });
 
-  return <main>{/* ... */}</main>;
+  return <main>{todos.join("、")}</main>;
 }
 ```
 
-声明之后，用户说“加一条：买牛奶”，Agent 会自己调用 `addTodo` 并更新界面。到这一步，对话、读状态、改应用三件事都跑通了。后端工具怎么注册，见下一节「在后端注册工具」。
+注册后，用户说“添加一条买牛奶”，Agent 就可以调用 `addTodo`。至此，对话、读取上下文和修改前端状态三条链路都已跑通。
 
-## 在后端注册工具
+## 注册后端工具
 
-前端 action 跑在浏览器里，适合直接改 UI 状态。需要查数据库、调内部接口、做服务端鉴权时，把 tool 注册在后端更合适。对 Agent 来说，后端 tool 和前端 action 没有区别，都是可调用函数，只差执行位置。
+前端 Tool 在浏览器中执行，适合操作 React 状态和浏览器 API。查询数据库、调用内部服务或执行鉴权逻辑时，应把 Tool 注册在后端。
 
-文章用的是 Built-in Agent，后端 tool 直接挂在 `BuiltInAgent` 上，前端代码不用动。
+本文使用 Built-in Agent，因此 Server Tool 和 MCP Server 都配置在 `BuiltInAgent` 上，前端代码不需要改动。
 
-### 用 defineTool 注册 Server Tool
+### 注册 Server Tool
 
-`defineTool` 来自 `@copilotkit/runtime/v2`，用 zod 描述参数，逻辑写在 `execute`：
+`defineTool` 使用 Zod 描述参数，并通过 `execute` 实现服务端逻辑。下面的示例注册了一个天气查询工具：
 
-```ts title="app/api/copilotkit/route.ts" fold
+```ts title="app/api/copilotkit/[...path]/route.ts" fold
 import { BuiltInAgent, defineTool } from "@copilotkit/runtime/v2";
 import { z } from "zod";
 
@@ -253,8 +264,10 @@ const getWeather = defineTool({
     city: z.string().describe("城市名"),
   }),
   execute: async ({ city }) => {
-    const res = await fetch(`https://api.weather.example?city=${city}`);
-    return res.json();
+    const url = `https://api.weather.example?city=${encodeURIComponent(city)}`;
+    const response = await fetch(url);
+
+    return response.json();
   },
 });
 
@@ -264,23 +277,20 @@ const builtInAgent = new BuiltInAgent({
 });
 ```
 
-`defineTool` 需要 zod，先装好：`npm install zod`。把这段合并进「配置 Copilot Runtime」的 route 文件后，用户问“北京天气怎么样”，Agent 会调用 `getWeather`，代码在服务端执行，结果回传前端渲染。
+把 `getWeather` 和 `tools` 配置合并到前面的 Runtime 路由中，Agent 就能调用该工具。示例中的天气地址仅用于展示调用方式，实际项目需要替换为真实接口，并在服务端处理鉴权与异常响应。
 
 ### 接入 MCP Server
 
-不想自己写 tool，可以复用现成的 MCP server。在 `BuiltInAgent` 上配 `mcpServers`，支持 `sse` 和 `http` 两种传输：
+如果已有 MCP Server，可以通过 `mcpServers` 直接向 Built-in Agent 提供工具。CopilotKit 支持 SSE 和 Streamable HTTP 传输：
 
-```ts title="app/api/copilotkit/route.ts" fold
+```ts title="app/api/copilotkit/[...path]/route.ts" fold
 const builtInAgent = new BuiltInAgent({
   model: "openai:gpt-5.4-mini",
   mcpServers: [
     { type: "sse", url: "https://my-mcp-server.example.com/sse" },
+    { type: "http", url: "https://my-mcp-server.example.com/mcp" },
   ],
 });
 ```
 
-`tools` 和 `mcpServers` 能一起用，Agent 同时看到两类 tool。需要鉴权时，给对应 server 加 `headers` 字段即可。
-
-## 总结
-
-到这，你已经从零搭出一个能对话、能读状态、能调函数、还能伸到后端的 Copilot MVP。Agent 能读你的应用状态、调用你的函数、复用后端的 tool 与 MCP，把它接进实际业务，就能从陪聊走向真正操作应用。
+`tools` 和 `mcpServers` 可以同时使用，Agent 会同时获得两类工具。MCP Server 需要鉴权时，可以在对应配置中添加 `headers`，敏感凭证仍应从服务端环境变量读取。

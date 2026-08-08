@@ -44,7 +44,7 @@ const SIDEBAR_GROUP_ORDERS: Record<string, string[]> = {
     'BFF',
     '性能优化与监控',
   ],
-  [AI_PATH]: ['Agent', 'Agent实战'],
+  [AI_PATH]: ['AI 工程', 'Agent', 'Agent实战'],
   [CODE_PATH]: ['算法', '设计模式', '数据结构', '函数式', '工具函数'],
 }
 const d2PreRenderOptions: D2PreRenderOptions = {
