@@ -17,6 +17,11 @@ NUMBERED_TITLE_RE = re.compile(
     r"[（(][一二三四五六七八九十百\d]+[）)]|第[一二三四五六七八九十百\d]+[章节部分])\s*"
 )
 DASH_CHARACTERS = ("—", "–", "―")
+FORBIDDEN_QUOTE_CHARACTERS = ('"', "“", "”", "‘", "’", "＂")
+OPENING_QUOTES = {"「": "」", "『": "』"}
+CLOSING_QUOTES = {"」": "「", "』": "『"}
+INLINE_CODE_RE = re.compile(r"`+[^`\n]*`+")
+LINK_DESTINATION_RE = re.compile(r"\]\((?:[^()]|\([^()]*\))*\)")
 
 
 def fail(errors: list[str], path: Path, line: int, message: str) -> None:
@@ -55,6 +60,41 @@ def visible_lines(lines: list[str]) -> tuple[list[tuple[int, str]], bool]:
             visible.append((number, line))
 
     return visible, bool(fence_char)
+
+
+def mask_protected_spans(line: str) -> str:
+    """Mask inline code and Markdown link destinations before text checks."""
+
+    masked = INLINE_CODE_RE.sub(lambda match: " " * len(match.group(0)), line)
+    return LINK_DESTINATION_RE.sub(
+        lambda match: "]" + " " * (len(match.group(0)) - 1), masked
+    )
+
+
+def validate_quotes(errors: list[str], path: Path, lines: list[tuple[int, str]]) -> None:
+    quote_stack: list[tuple[str, int]] = []
+
+    for number, line in lines:
+        text = mask_protected_spans(line)
+        if any(character in text for character in FORBIDDEN_QUOTE_CHARACTERS):
+            fail(errors, path, number, "正文自然语言引号统一使用「」")
+
+        for character in text:
+            if character in OPENING_QUOTES:
+                quote_stack.append((character, number))
+                continue
+            if character not in CLOSING_QUOTES:
+                continue
+            expected_opening = CLOSING_QUOTES[character]
+            if not quote_stack:
+                fail(errors, path, number, "引号缺少开头")
+            elif quote_stack[-1][0] != expected_opening:
+                fail(errors, path, number, "引号嵌套或配对错误")
+            else:
+                quote_stack.pop()
+
+    for opening, number in quote_stack:
+        fail(errors, path, number, f"引号 {opening}{OPENING_QUOTES[opening]} 没有闭合")
 
 
 def validate_lists(errors: list[str], path: Path, lines: list[tuple[int, str]]) -> None:
@@ -122,7 +162,7 @@ def validate(path: Path) -> list[str]:
         if any(character in line for character in DASH_CHARACTERS):
             fail(errors, path, number, "正文不能使用破折号")
         if "其他" in line:
-            fail(errors, path, number, "统一使用“其它”，不要使用“其他”")
+            fail(errors, path, number, "统一使用「其它」")
         heading_match = HEADING_RE.match(line)
         if not heading_match:
             continue
@@ -142,6 +182,7 @@ def validate(path: Path) -> list[str]:
         previous_heading_level = level
 
     body_lines = [(number, line) for number, line in visible if number > frontmatter_end]
+    validate_quotes(errors, path, body_lines)
     validate_lists(errors, path, body_lines)
     return errors
 
