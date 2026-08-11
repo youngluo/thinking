@@ -7,6 +7,12 @@ type MarkdownNode = {
   lang?: string
   meta?: string
   value?: string
+  name?: string
+  attributes?: unknown[]
+  data?: {
+    estree?: unknown
+    [key: string]: unknown
+  }
   children?: MarkdownNode[]
 }
 
@@ -45,6 +51,63 @@ const defaultRenderOptions: CompileOptions = {
 
 function getFilePath(file: MarkdownFile) {
   return file.path || file.history?.[0] || 'unknown markdown file'
+}
+
+/**
+ * 为 MDX 文件创建一个可编译的内联 SVG 节点。
+ */
+function createMdxSvgNode(svg: string): MarkdownNode {
+  const expression = `{__html: ${JSON.stringify(svg)}}`
+
+  return {
+    type: 'mdxJsxFlowElement',
+    name: 'div',
+    attributes: [
+      {
+        type: 'mdxJsxAttribute',
+        name: 'dangerouslySetInnerHTML',
+        value: {
+          type: 'mdxJsxAttributeValueExpression',
+          value: expression,
+          data: {
+            estree: {
+              type: 'Program',
+              start: 0,
+              end: expression.length,
+              body: [
+                {
+                  type: 'ExpressionStatement',
+                  expression: {
+                    type: 'ObjectExpression',
+                    properties: [
+                      {
+                        type: 'Property',
+                        method: false,
+                        shorthand: false,
+                        computed: false,
+                        key: {
+                          type: 'Identifier',
+                          name: '__html',
+                        },
+                        value: {
+                          type: 'Literal',
+                          value: svg,
+                          raw: JSON.stringify(svg),
+                        },
+                        kind: 'init',
+                      },
+                    ],
+                  },
+                },
+              ],
+              sourceType: 'module',
+            },
+          },
+        },
+      },
+    ],
+    children: [],
+  }
 }
 
 function getBlockCacheKey(
@@ -309,14 +372,22 @@ async function visitD2CodeBlocks(
       )
     }
 
-    node.type = 'html'
-    node.value = await renderD2(
+    const svg = await renderD2(
       code,
       options,
       filePath,
       counter.value,
       node.meta
     )
+
+    // MDX 不会像 Markdown 一样自动把 html 节点交给 rehype-raw 处理。
+    if (filePath.endsWith('.mdx')) {
+      Object.assign(node, createMdxSvgNode(svg))
+    } else {
+      node.type = 'html'
+      node.value = svg
+    }
+
     delete node.lang
     delete node.meta
 
