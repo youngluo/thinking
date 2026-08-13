@@ -179,6 +179,16 @@ Hydration mismatch 表示客户端首次渲染的结构或文本无法与服务�
 </time>
 ```
 
+### Hydration 与客户端渲染的差异
+
+Hydration 与普通客户端渲染都要经历入口、Render 和 Commit 阶段，但处理 DOM 的方式不同。`createRoot` 接收一个 DOM 容器并为其创建 React 根，随后由 `root.render` 将 React 元素渲染到这个容器中；`hydrateRoot` 则接收服务端已经生成的 HTML 和对应的 React 元素，启动 Hydration。
+
+Render 阶段，两者都会执行组件函数、构建 Fiber 树，并沿用同一套 Reconciliation 逻辑。区别在于 Host Fiber 的 DOM 处理：`createRoot` 创建新的 DOM 节点，Hydration 则在 Hydration 状态下查找、校验并认领已有 DOM。因此，Hydration 并没有跳过 Render，而是将服务端 DOM 作为匹配目标。
+
+Commit 阶段，两者都会提交 Render 阶段计算出的结果，完成 DOM 处理和 ref 挂载，让客户端接管交互；相关 Effect 则按 React 的调度规则执行。`createRoot` 将新建的 DOM 节点插入容器，Hydration 则在已认领的 DOM 上完成必要更新。两者共用同一套 Commit 流程，DOM 处理会根据是否处于 Hydration 状态采用不同路径。
+
+在 Next.js App Router 中，框架通常在应用根节点调用一次 `hydrateRoot`。后续到达的 Streaming HTML 和 Selective Hydration 对 Suspense 边界的调度，都会在这个根节点下继续处理，无需再次调用 `hydrateRoot`。
+
 ## Suspense 边界
 
 前面介绍的是响应完整到达后，React 如何复用 HTML 并完成 Hydration。这里进一步说明响应分批到达时，Suspense 边界如何组织异步内容，以及它对 HTML 输出和 Hydration 的影响。
