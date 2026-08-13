@@ -6,11 +6,11 @@ draft: true
 
 # Extensions 如何扩展 Agent
 
-Agent Runtime 提供稳定的循环和事件，但不同开发者需要的工具、命令、权限和交互方式并不相同。Pi 用 TypeScript Extension 把这些产品差异放到运行时之外，再通过 `ExtensionAPI` 接入生命周期。
+Agent Runtime 提供稳定的循环和事件，但不同产品需要的工具、命令、安全策略和交互方式并不相同。Pi 用 TypeScript Extension 承载这些差异，再通过 `ExtensionAPI` 接入 coding-agent 生命周期。
 
-本文以 Pi commit `936aff00918de1187f085f123c2812d8f2d67745` 为基准，结合 `packages/coding-agent/docs/extensions.md`，说明扩展如何被发现、如何注册能力，以及事件和 Hook 如何改变一次任务的运行过程。
+本文以 Pi `v0.84.1` 为基准，说明扩展如何被发现、如何注册能力，以及事件和 Hook 如何介入一次任务。
 
-## 扩展层解决什么
+## Extensions 解决什么
 
 Extension 是一个由 Pi 加载的 TypeScript 模块，既可以观察 Agent 运行，也可以注册新能力或拦截特定阶段：
 
@@ -21,22 +21,26 @@ Extension 是一个由 Pi 加载的 TypeScript 模块，既可以观察 Agent �
 | 注册命令 | 增加 `/name` 形式的用户操作 |
 | 用户交互 | 使用 `ctx.ui` 请求确认、输入、选择或通知 |
 | 持久化扩展状态 | 通过 Session entry 保存可跨重启恢复的数据 |
+| 注册 Provider | 接入本地模型、代理服务或动态模型目录 |
 
-扩展通常放在全局 `~/.pi/agent/extensions/` 或项目 `.pi/extensions/` 目录中。Pi 启动时发现这些模块，开发期间可以通过 `/reload` 重新加载；临时测试也可以显式传入扩展路径。
+## 扩展如何发现与加载
 
-## ExtensionAPI 如何接入生命周期
+扩展通常放在全局 `~/.pi/agent/extensions/` 或项目 `.pi/extensions/` 目录中。Pi 启动时自动发现这些模块，开发期间可以通过 `/reload` 重新加载；`pi -e ./path.ts` 适合临时测试。
 
-扩展通过默认导出的工厂函数拿到 `ExtensionAPI`。同一个入口同时提供事件订阅、能力注册和用户界面访问：
+项目级扩展只有在当前项目被信任后才会加载。`project_trust` 发生在项目资源加载之前，并且只有用户级扩展和命令行显式传入的扩展能够参与这个判断。这样可以避免尚未信任的仓库先执行自己的扩展代码。
+
+## ExtensionAPI 如何注册能力
+
+扩展通过默认导出的工厂函数拿到 `ExtensionAPI`，再注册事件、工具、命令、快捷键、参数和 Provider：
 
 ```ts fold title="example-extension.ts"
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 export default function (pi: ExtensionAPI) {
-  const onAgentEnd = async () => {
-    pi.notify("Agent run finished", "info");
-  };
+  pi.on("agent_end", async (_event, ctx) => {
+    ctx.ui.notify("Agent run finished", "info");
+  });
 
-  pi.on("agent_end", onAgentEnd);
   pi.registerCommand("hello", {
     description: "Show a notification",
     handler: async (_args, ctx) => {
@@ -46,24 +50,23 @@ export default function (pi: ExtensionAPI) {
 }
 ```
 
-扩展工厂可以在加载时完成注册，也可以异步初始化外部资源。注册本身不会复制 Agent Loop，而是把回调挂到宿主维护的事件和能力表中。
+工厂可以同步或异步返回。Pi 会等待异步初始化完成，再触发 `session_start` 和 `resources_discover`，因此动态模型目录等一次性启动工作可以放在工厂里。进程、Socket、文件监听器和定时器等长期资源应延迟到 `session_start` 或实际使用时创建，并在幂等的 `session_shutdown` 处理器中关闭。
 
-## 如何注册工具和命令
+`registerTool()` 把 `AgentTool` 加入产品工具集合，模型可以像调用内置工具一样调用它。工具参数、执行函数和执行模式仍由工具定义，运行时负责统一校验、调度与结果回注。
 
-`registerTool()` 把一个 `AgentTool` 放入产品层的工具集合，模型可以像调用内置工具一样调用它。工具的参数 schema、执行函数和执行模式仍由工具定义，运行时负责统一校验、调度和结果回注。
+`registerCommand()` 面向用户输入，不会暴露给模型。命令可以读取上下文、修改设置、触发 Session 操作或调用 `ctx.ui`，适合承载必须由用户显式发起的动作。
 
-`registerCommand()` 面向用户输入，不直接作为模型工具。命令可以读取上下文、修改设置、触发 Session 操作或调用 `ctx.ui`，适合承载模型不应该自行决定的显式操作。
+工具扩展模型的行动空间，命令扩展用户对 Agent 的控制空间。两者共用同一个扩展入口，但拥有不同的调用者和安全边界。
 
-这两个入口体现了扩展层的两种方向：工具扩展模型的行动空间，命令扩展用户对 Agent 的控制空间。
+## 事件与 Hook 如何介入
 
-## 如何监听事件和介入交互
-
-Pi 的事件和 Hook 需要区分：事件用于观察已经发生或正在发生的过程，Hook 则允许扩展在边界上拦截或修改行为。一个任务的主要生命周期可以概括为：
+`pi.on()` 既能订阅观察型事件，也能在支持返回值的边界上拦截或修改行为。一个任务的主要生命周期可以概括为：
 
 ```d2 fold
 direction: down
 
-startup: "pi starts"
+startup: "Pi 启动"
+trust: project_trust
 session: session_start
 discover: resources_discover
 input: input
@@ -84,25 +87,34 @@ turn: "turn loop" {
 }
 end: agent_end
 settled: agent_settled
+shutdown: session_shutdown
 
-startup -> session -> discover -> input -> before -> agent -> turn -> end -> settled
+startup -> trust -> session -> discover -> input -> before -> agent -> turn -> end -> settled
+settled -> input: "继续接收任务"
+settled -> shutdown: "切换会话或退出"
 ```
 
-扩展可以在 `input` 阶段改写或接管用户输入，在 `before_agent_start` 阶段补充系统提示词或上下文，在 `context` 阶段调整模型消息，也可以在 `tool_call` 阶段阻止工具或在 `tool_result` 阶段修改结果。Provider 请求前后的事件则适合审计请求头、请求体和响应状态。
+扩展可以在 `input` 阶段改写或接管用户输入，在 `before_agent_start` 阶段补充系统提示词或上下文，在 `context` 阶段调整模型消息，在 `tool_call` 阶段阻止工具，也可以在 `tool_result` 阶段修改结果。Provider 请求前后的事件则用于调整请求头、检查请求体或观察响应状态。
 
-Session 切换也有对应生命周期。`/new` 和 `/resume` 会触发旧会话关闭与新会话启动，`/fork` 和 `/clone` 会在创建新 Session 前后触发可取消的切换事件。扩展可以利用这些边界清理资源、同步状态或拒绝不满足条件的切换。
+`agent_end` 表示当前 Agent run 的事件已经结束，`agent_settled` 则表示重试、压缩和 follow-up 也已经处理完毕。Session 切换还有 `session_before_switch`、`session_shutdown` 和新的 `session_start`；扩展可以在这些边界清理资源、同步状态或拒绝切换。
 
-## 扩展与运行时的边界
+## Session 与 UI 的边界
 
-扩展拥有很强的组合能力，但它仍然运行在产品宿主提供的边界内：
+扩展可以通过 `pi.appendEntry()` 保存不进入模型上下文的自定义状态，也可以追加 `custom_message` 向模型注入上下文。两者都写入 Session Tree，但用途不同：前者用于恢复扩展状态，后者会影响模型后续决策。
 
-- Agent Loop 决定模型、工具和消息的基本执行顺序，扩展通过事件和 Hook 接入，而不是复制一套循环；
-- 工具扩展可以产生真实副作用，因此扩展代码本身也需要被信任和审查；
-- `ctx.ui` 只在有界面宿主时可用，扩展不应假设所有运行模式都存在 TUI；
-- 需要跨重启保存的数据可以通过 `pi.appendEntry()` 写入 Session，但具体 entry 如何展示和是否进入模型上下文需要明确约定。
+`ctx.ui` 提供确认、输入、选择、通知和自定义组件等交互能力。扩展需要先检查 `ctx.hasUI`，不能假设 print、JSON 或 RPC 模式都存在 TUI。自定义渲染只改变内容如何展示，不应成为恢复业务状态的唯一来源。
 
-这套边界让核心保持极简，同时允许产品按自己的安全策略、交互方式和工作流增加能力。`coding-agent` 这一产品层会进一步组合运行时、工具、会话和交互流程。
+## 安全与运行时边界
+
+Extensions 不是受限插件。它们与 Pi 进程拥有相同的系统权限，可以读取文件、执行命令和访问网络，因此只应安装可信来源的代码。项目信任机制阻止未授权的项目扩展自动加载，但不会沙箱化已经获准执行的扩展。
+
+- Agent Loop 决定模型、工具和消息的基本顺序，扩展只在宿主开放的事件边界介入；
+- 扩展注册的工具会产生真实副作用，其输入校验和授权策略仍由扩展与产品负责；
+- 长期资源必须跟随 Session 生命周期关闭，不能只依赖进程退出；
+- 需要更强隔离时，应在容器、受限进程或远程服务层实现，而不是把 `ExtensionAPI` 当作安全沙箱。
+
+Extensions 让核心运行时保持稳定，同时允许产品组合自己的工具、安全策略和交互流程。
 
 ## 小结
 
-Extensions 是 Pi 的产品适配层。它通过 `ExtensionAPI` 注册工具和命令，通过事件观察生命周期，通过 Hook 在关键边界上拦截或修改行为，并可以为扩展状态增加持久化。Agent Runtime 保持循环一致，产品差异则由扩展组合出来。
+Extensions 通过 `ExtensionAPI` 注册工具、命令和 Provider，通过生命周期事件观察或修改运行，并通过 Session entry 保存扩展状态。它具有完整进程权限，项目信任、资源清理和 UI 可用性必须由扩展显式处理。

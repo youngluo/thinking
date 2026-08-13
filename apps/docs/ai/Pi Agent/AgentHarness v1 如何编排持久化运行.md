@@ -1,25 +1,25 @@
 ---
 createdAt: '2026-08-09 22:15'
-order: 10
+order: 11
 draft: true
 ---
 
 # AgentHarness v1 如何编排持久化运行
 
-Agent Loop 能够推进一次任务，但它本身不负责跨进程保存运行过程，也不负责处理多个操作同时写入同一个 Session。AgentHarness v1 试图在 Agent Loop 之上增加一层编排，统一管理 Session、运行配置、资源解析、操作锁和恢复入口。
+Agent Loop 能够推进一次任务，但它本身不负责跨进程保存运行过程，也不负责处理多个操作同时写入一个 Session。AgentHarness v1 曾尝试在 Agent Loop 之上增加一层编排，统一管理 Session、运行配置、操作锁和恢复入口。
 
-本文讨论 `packages/agent/docs/harness.md` 所描述的 v1 设计。它是理解 v2 的历史起点，不能把设计文档中的待办项、接口草案或未完成实现当作当前已经具备的能力。
+本文从 Pi `v0.84.1` 回看已被取代的 v1 设计，只用于理解 AgentHarness 的问题来源和设计演进。v1 不是当前公共 API，本文提到的 Ref、Harness entry 和恢复规则也不应直接用于新产品。
 
 ## 为什么需要 AgentHarness
 
 当 Agent 从一次性调用变成长期运行的产品，会遇到低层 Agent Loop 不负责的问题：
 
-- Session 需要持久化，且同一个 Session 可能被多个外部线程或任务使用；
+- Session 需要持久化，且同一个 Session 可能承载多个外部线程；
 - 运行过程需要恢复，不能只依赖进程内的 `Agent.state`；
-- 操作需要排队、加锁和拒绝冲突，避免两个写入者同时修改同一份历史；
-- Compaction、分支导航和普通 prompt 都需要共享生命周期和错误处理方式。
+- 操作需要排队和拒绝冲突，避免多个写入者同时修改历史；
+- Compaction、分支导航和普通 prompt 需要共享生命周期与错误处理。
 
-Harness 的职责不是重新实现模型调用，而是把一次运行放进一个有边界、可恢复的操作中。
+Harness 不重新实现模型调用，而是把一次运行放进有边界、可恢复的操作中。
 
 ## AgentHarness 如何管理一次运行
 
@@ -79,7 +79,7 @@ Session entry 有 `parentId`，参与对话树和 leaf 移动；Harness entry �
 
 ## 锁、队列与异常恢复
 
-v1 的核心并发原则是 Single writer, parallel refs：同一时间只有一个 Harness 写入一个 Session，但这个 Harness 内可以让多个 Ref 分别推进操作。
+v1 的核心并发原则是「Single writer, parallel refs」。同一时间只有一个 Harness 写入一个 Session，但同一 Harness 内可以让多个 Ref 分别推进操作。
 
 每个 Ref 还需要自己的状态和队列：
 
@@ -94,12 +94,12 @@ v1 设计还区分低层错误值和高层操作错误。底层可以通过 `Res
 
 阅读 v1 文档时需要保留三个判断：
 
-1. `harness.md` 描述的是 v1 设计，后续 `harness-v2.md` 已明确将其取代，冲突处以 v2 为准；
-2. 设计文档中的阶段、恢复规则和接口并不自动等于仓库中已经完成的实现，必须以对应 commit 的源码和测试为准；
-3. v1 记录了「一次运行正在做什么」，但没有完整解决崩溃发生在任意副作用边界时如何做到无部分结果，这正是 v2 引入 Durable Runs、操作日志和更细步骤边界的原因。
+1. v1 设计已经被 v2 取代，冲突处以 v2 为准；
+2. Ref、Harness entry 等术语只用于理解旧方案，不对应 `v0.84.1` 的 `AgentHarness` 公共接口；
+3. v1 记录了「一次运行正在做什么」，但没有完整定义任意副作用边界的恢复语义，因此 v2 改用 Lane、Operation Log 和更细的持久化边界。
 
 v1 的价值主要在于把问题空间拆出来：Session 保存什么、Harness 需要额外记录什么、Ref 如何隔离并发，以及事件和 Hook 在编排层如何区分。它不是最终的持久化运行时规范。
 
 ## 小结
 
-AgentHarness v1 在 Agent Loop 之上增加了 Session、Ref、操作阶段和单写入协调。Session entry 保存对话树，Harness entry 保存恢复所需的编排事实，Ref 则把多个运行位置映射到同一份 Session。v1 解决了编排问题的基本形状，但没有提供 v2 所要求的完整 Durable Runs 保证。
+AgentHarness v1 用 Session、Ref、操作阶段和单写入协调描述了持久化编排的基本形状。Session entry 保存对话树，Harness entry 保存编排事实，Ref 将多个运行位置映射到同一 Session。它的主要价值是解释 v2 为什么需要 Lane 和更严格的 Durable Runs 设计。

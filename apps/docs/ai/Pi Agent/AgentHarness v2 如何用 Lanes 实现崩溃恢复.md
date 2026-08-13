@@ -1,18 +1,18 @@
 ---
 createdAt: '2026-08-09 22:15'
-order: 11
+order: 12
 draft: true
 ---
 
 # AgentHarness v2 如何用 Lanes 实现崩溃恢复
 
-v1 解决了持久化编排的基本问题，但仍难以覆盖「进程恰好在副作用边界崩溃」的情况。AgentHarness v2 将一次运行拆成可以记录、恢复和重放的 Durable Run，并用 Lane 表示并发工作在 Session Tree 中的位置。
+v1 描述了持久化编排的基本问题，但没有完整覆盖「进程恰好在副作用边界崩溃」的情况。AgentHarness v2 的目标是把一次运行拆成可记录、恢复和重放的 Durable Run，并用 Lane 表示并发工作在 Session Tree 中的位置。
 
-本文以 `packages/agent/docs/harness-v2.md` 为主要阅读入口。v2 已取代 v1，文中会明确区分设计目标、已落地的公共契约和仍属于 `Implementation todo` 的部分，避免把设计文档当成完整实现。
+本文以 Pi `v0.84.1` 的 Durable AgentHarness 设计与源码为基准。v2 已取代 v1，但稳定版仍处于分阶段实现中：Session 与存储基础、公共类型和 `AgentHarness` scaffold 已存在，主要运行与恢复能力尚未完整落地。下文先解释目标设计，再单独说明实现状态。
 
-## v2 解决了什么问题
+## v2 解决什么
 
-v2 要保证的不是「进程重启后重新调用一次 prompt」，而是每个可能被崩溃打断的操作都能被判断和恢复：
+v2 希望每个可能被崩溃打断的操作都能被判断和恢复，不能只在进程重启后重新调用一次 prompt：
 
 - **Durable Runs**。接受一个 prompt 后，运行本身成为持久化操作，重启后可以从记录继续；
 - **Durable Responses**。assistant 响应在分类、重试、压缩或失败处理前先完整写入，避免只保存半段流；
@@ -20,7 +20,7 @@ v2 要保证的不是「进程重启后重新调用一次 prompt」，而是每�
 - **Single writer**。一个 Session 同时只有一个 Harness 写入，多个 Lane 的操作可以并行交错；
 - **可观测和可测试**。每个副作用都经过显式边界，测试可以在边界前暂停并模拟关闭与重启。
 
-这些目标把「运行逻辑」变成「可恢复的操作过程」，也是 v2 与普通 Agent Loop 的根本区别。
+这些是 v2 的设计目标，不代表 `v0.84.1` 已经完整实现。它们把「运行逻辑」改写为「可恢复的操作过程」，也是 v2 与普通 Agent Loop 的根本区别。
 
 ## Durable Runs 如何记录运行过程
 
@@ -31,8 +31,8 @@ direction: right
 
 prompt: "接受 prompt"
 accepted: operation_started
-step: step_started
-attempt: attempt_started
+step: "逻辑 Step"
+attempt: "step_attempt\n第 n 次尝试"
 effect: "Provider / Tool effect"
 commit: "durable result"
 finish: operation_finished
@@ -40,10 +40,10 @@ recover: 崩溃后恢复
 
 prompt -> accepted -> step -> attempt -> effect -> commit -> finish
 accepted -> recover: 进程在任意边界退出
-recover -> step: "从最后一个 durable boundary 继续"
+recover -> attempt: "从最后一个 durable boundary 继续"
 ```
 
-每次模型请求或延迟获取都有稳定的 `stepId` 和编号的 attempt。响应必须先以完整结果写入，再决定是完成、重试、压缩、暂停、失败还是中止。流式过程可以是进程内的临时状态，但不能把半个 assistant 响应当作已经持久化的最终事实。
+每个可重试的模型步骤都通过 `step_attempt` 记录步骤类型、attempt 编号和预分配的结果 entry。一次 attempt 可以发起多个 Provider 请求，但响应必须先以完整结果写入，再决定是完成、重试、压缩、暂停、失败还是中止。流式过程可以是进程内的临时状态，但不能把半个 assistant 响应当作已经持久化的最终事实。
 
 如果副作用已经发生但结果没有记录，恢复逻辑必须依据已持久化的准备记录决定重试、补写合成结果或明确失败，而不能盲目重复可能产生副作用的动作。
 
@@ -83,16 +83,18 @@ v2 把三类工作统一为 Operation：
 | Compaction | 用摘要 entry 替换旧上下文的模型投影 |
 | Navigation | 移动 Lane 的 leaf，可选择为被放弃分支生成摘要 |
 
-Operation 下面还有两个层次：
+模型生成与摘要生成还会继续拆成两个层次：
 
 - Step 是一次稳定的逻辑工作单元，例如一次 assistant generation、Compaction 或 Branch Summary；
 - Attempt 是一个 Step 的具体 Provider 尝试，带有编号、重试策略和同一份配置快照。
 
-`operation_started`、`step_started`、`attempt_started` 和 `operation_finished` 等记录让恢复逻辑知道当前操作已经越过哪些边界。一个 operation 只有一个终态记录，完成、失败和中止都必须可区分，Compaction 或 Navigation 还可能明确记录为 declined。
+`operation_started`、`step_attempt`、`tool_started` 和 `operation_finished` 等记录让恢复逻辑知道当前操作已经越过哪些边界。一个 operation 只有一个终态记录，完成、失败和中止都必须可区分，Compaction 或 Navigation 还可能明确记录为 declined。
 
-## 工具调用的三个阶段
+已开始产生副作用的工具调用也是一个持久化 Step，但不使用 `step_attempt`。`tool_started` 打开这个 Step，对应的 tool-result entry 将它闭合，恢复逻辑据此判断是否需要重放或补写中断结果。
 
-v2 将工具调用拆为 clearance、effect 和 finalization 三个阶段，使 `tool_started` 可以成为「允许执行」与「产生副作用」之间的持久化边界：
+## 工具执行的持久化边界
+
+目标设计将工具调用拆为 clearance、effect 和 finalization 三个阶段，使 `tool_started` 成为「允许执行」与「产生副作用」之间的持久化边界：
 
 ```d2 fold
 direction: right
@@ -111,9 +113,11 @@ call -> prepare -> start -> execute -> finalize -> result
 - `executeToolCall` 执行已准备好的工具，失败也转换为结果，不把异常留在恢复边界之外；
 - `finalizeToolCall` 执行 `after_tool` 的字段级 patch，确定最终的 `content`、`details`、`isError` 和 `terminate`。
 
-批处理驱动器先按 assistant 响应中的源顺序完成准备和 `tool_started` 写入。并行模式可以同时执行多个已准备工具，但结果最终仍按源顺序写入；串行模式则让每个工具完整经过三阶段后再处理下一个。这样恢复时不需要重新执行已经完成的 clearance，也能知道哪些副作用已经开始。
+批处理驱动器按 assistant 响应中的源顺序完成准备和 `tool_started` 写入。并行模式可以同时执行多个已准备工具，但结果仍按源顺序写入；串行模式则让每个工具完整经过三阶段后再处理下一个。
 
-## 结构性 Hooks 与兼容边界
+恢复时会检查 `tool_started.replay` 和当前工具声明。两者都为 `safe` 才能重新执行未完成工具；否则写入合成的 interrupted 结果。`v0.84.1` 的低层 Agent Loop 已有 prepare、execute、finalize 边界，但 Harness 内带持久化记录和恢复语义的三阶段驱动仍列在后续实现任务中。
+
+## Hooks 与恢复语义
 
 v2 的 Hook 不只是工具拦截，还包括会改变持久化结构的决策：
 
@@ -123,15 +127,30 @@ v2 的 Hook 不只是工具拦截，还包括会改变持久化结构的决策�
 | `before_compaction` | 拒绝压缩、提供摘要，或让 Provider 生成摘要 |
 | `before_navigation` | 拒绝导航、提供分支摘要，或让 Provider 生成摘要 |
 
-事件负责观察，Hook 负责改变执行。Hook 如果直接提供结构性结果，Harness 会先把完整结果写入 `step_started`，恢复时就不会再次调用同一个决策 Hook。
+事件负责观察，Hook 负责改变执行。Hook 结果只有写入对应 record 或 entry 后才变得持久；崩溃发生在提交前时，Hook 可能再次运行。包含网络请求、文件写入等外部副作用的 Hook 必须自行保证幂等，例如使用 operation ID 作为去重键。
 
-v2 仍然承诺兼容低层 `agentLoop`、`agentLoopContinue`、`runAgentLoop` 和 `AgentEventSink` 的公共接口。兼容的含义是旧循环可以继续运行，不代表旧循环自动拥有 Durable Runs；持久化能力只存在于新的 Harness 组合层。
+`before_run` 的结果写入 `operation_started`，`before_tool` 的有效参数写入 `tool_started`，`after_tool` 的最终结果写入 tool-result entry。恢复时只重跑尚未有持久化结果的工作，不能把 Hook 调用本身视为 exactly-once。
 
-## Fork、Subagent 与 Telemetry
+## 扩展能力与兼容边界
+
+v2 仍保留低层 Agent Loop 作为兼容路径，但旧循环不会自动获得 Durable Runs。旧的 coding-agent v3 JSONL Session 只要求能够打开并以 idle 状态恢复；coding-agent 本身迁移到新 Harness 不在 v2 的兼容承诺中。
 
 Fork 用于复制一个一致的已提交 Session 快照，可以复制一条分支或整棵 Tree，但不会复制源 Session 的 Lane records 和未完成操作。新 Session 通过 `parentSessionId` 保留父子关系，适合隔离实验、导出或构建 Subagent。Harness 本身不规定 Subagent 工具，父子调度属于应用层策略。
 
 Telemetry 也保持独立边界。Harness 通过显式的 `TelemetryContext` 传递调用上下文，不依赖全局当前 span 或 `AsyncLocalStorage`；核心提供契约和内存参考实现，是否接入具体导出器由应用决定。
+
+## 稳定版落地状态
+
+`v0.84.1` 已导出 Harness 的公共类型、Result 与 tagged errors、Session Tree、记录模型、内存存储、部分 JSONL/SQLite 基础和 `AgentHarness` scaffold。源码中的运行方法仍清楚地区分可用与未完成部分：
+
+| 能力 | `v0.84.1` 状态 |
+| --- | --- |
+| Session、entry、record 与存储基础 | 已有实现与测试基础 |
+| Harness 配置读取和少量 scaffold-safe 状态 | 可用 |
+| `prompt()`、`resume()`、Lane 管理与 watch | 仍抛出 `HarnessNotImplemented` |
+| Hooks、Durable Run、工具恢复与完整自动驱动 | 仍在实现计划中 |
+
+因此，这篇文章用于理解当前稳定版已经公开的目标架构和实现边界，不应把设计文档中的完整流程当作可直接用于生产的能力。开发新产品时，应逐项以稳定标签下的源码和测试确认可用范围。
 
 ## v1 与 v2 的设计差异
 
@@ -141,10 +160,10 @@ Telemetry 也保持独立边界。Harness 通过显式的 `TelemetryContext` 传
 | 持久化重点 | 记录对话和部分编排事实 | 每个操作、步骤、尝试和副作用都有 durable boundary |
 | 崩溃处理 | 根据日志判断并恢复，边界不完整 | 以 No partial outcomes 为目标，恢复未完成 operation |
 | 工具执行 | Agent Loop 负责整体工具调用 | prepare、execute、finalize 三阶段可单独恢复 |
-| 设计状态 | v1 文档已被取代 | v2 仍需结合 commit、源码和测试判断实现状态 |
+| 设计状态 | 已被取代的历史方案 | 当前目标设计，稳定版仍在分阶段实现 |
 
-v2 的关键不是增加更多名词，而是把「发生过什么」和「接下来必须做什么」都变成可持久化事实。这样，进程重启不再只是重新加载消息，而是重新驱动一个有明确记录的操作。
+v2 把「发生过什么」和「接下来必须做什么」都变成可持久化事实。进程重启后，Harness 不只重新加载消息，还要重新驱动一个有明确记录的操作。
 
 ## 小结
 
-AgentHarness v2 用四元 Session 保存对话树、Lane 位置、Lane 操作日志和全局事实，用 Operation、Step、Attempt 记录可恢复的工作单元，再把工具拆成可持久化的三阶段。Lanes 允许并行工作，single writer 保证写入一致，Durable Runs 则把崩溃恢复从约定变成操作边界。
+AgentHarness v2 用四元 Session、Lane、Operation 和持久化意图描述 Durable Runs，并为工具副作用定义明确恢复策略。`v0.84.1` 已具备公共契约和部分基础设施，但主要运行与恢复流程尚未完整实现。理解设计与核对实现状态同样重要。

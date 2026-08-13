@@ -7,83 +7,88 @@ import { Tab, Tabs } from '@rspress/core/theme'
 
 # Agent 应用中的流处理
 
-Agent 请求往往要经过多轮模型调用，期间还会穿插检索、工具执行和最终响应生成。如果等所有步骤完成后再返回，用户在这段时间里看不到进展。流式处理让服务端在执行过程中持续发送事件，前端可以边接收边更新回答和执行状态。这些事件不只包含模型文本增量，也包括检索和工具调用状态、工具参数与结果、错误和结束信号。
-
-本文的服务端代码统一使用 Next.js App Router 的 Route Handler 作为 HTTP 入口，便于展示请求、响应、流和取消信号如何衔接。这个选择只影响示例入口，流处理本身不依赖 Next.js，独立 Node.js 服务也可以采用同样的事件分层和转换逻辑。
+Agent 请求通常不是一次模型调用，而是由模型、检索和工具执行组成的连续过程。服务端需要把这些步骤产生的增量结果转换为稳定的业务事件，再交给客户端逐步更新回答和执行状态。本文以 SSE 为例，介绍 Agent 应用中的流读取、服务端中转和客户端消费。
 
 ## 什么是流
 
-流（stream）是一种增量传输数据的抽象。数据生产方可以在产生一部分数据后立即发送，消费方则在片段到达时逐个处理，不必等待完整结果。普通响应通常要等结果生成完成后，才将完整响应交给消费方。
+流（stream）描述数据按产生顺序逐步到达的过程。生产方产生一部分数据后即可发送，消费方收到后立即处理，不必等待完整结果。普通响应则要等结果全部生成后，再一次性交给消费方。
 
-流描述的是数据如何到达，不规定数据的具体内容或编码。SSE 负责定义网络上的消息格式，Web Streams 和 Node.js Streams 则提供在代码中读取、写入和转换这些数据的 API。本文先区分两套运行时 API，再说明数据如何从网络片段转换成业务事件。
+流描述数据如何到达，不限定内容或编码。SSE 定义网络传输中的事件格式，Web Streams 和 Node.js Streams 提供在代码中读取、写入和转换这些数据的 API。
 
 ### Node.js Streams
 
-Node.js Streams 是 Node.js 运行时中的流 API，核心类型包括 `Readable`、`Writable`、`Duplex` 和 `Transform`。
+Node.js Streams 是 Node.js 运行时提供的流 API，主要包含以下类型：
 
-- `Readable` 表示可读取的数据源；
-- `Writable` 表示可写入的目标；
-- `Duplex` 同时支持读取和写入；
-- `Transform` 是一种可以处理并转换数据的双工流。
+- `Readable` 用于读取数据；
+- `Writable` 用于写入数据；
+- `Duplex` 支持双向读写；
+- `Transform` 用于在读写过程中转换数据。
 
-Node.js Streams 主要用于文件、网络连接和进程输入输出。可读流通常通过 `pipe()` 连接到其它流，也可以通过 `for await...of` 按块消费。它与 Web Streams 的职责相近，但类型和方法不同；需要互操作时，Node.js 提供 `Readable.fromWeb()` 和 `Readable.toWeb()`。
+Node.js Streams 主要用于文件、网络连接和进程输入输出。可读流通常通过 `pipe()` 连接到其它流，也可以通过 `for await...of` 按块消费。它与 Web Streams 的职责相近，但类型和方法不同。两者需要互操作时，Node.js 提供 `Readable.fromWeb()` 和 `Readable.toWeb()`。
 
 ### Web Streams
 
-Web Streams API 是 Web 平台提供的流 API，核心类型包括 `ReadableStream`、`WritableStream` 和 `TransformStream`。
+Web Streams API 是 Web 平台提供的流 API，主要包含以下类型：
 
 - `ReadableStream` 用于逐段读取数据；
 - `WritableStream` 用于逐段写入数据；
 - `TransformStream` 用于在读取和写入之间转换数据。
 
-客户端通过 `fetch` 发起请求后，`response.body` 就是一个 `ReadableStream<Uint8Array>`。读取时先通过 `getReader()` 获取读取器，再调用 `reader.read()` 取得数据片段。`done` 表示流是否结束，`value` 是 `Uint8Array`，需要用 `TextDecoder` 将 `value` 解码成文本：
+客户端通过 `fetch` 发起请求后，`response.body` 是一个 `ReadableStream<Uint8Array>`。读取时先通过 `getReader()` 获取读取器，再调用 `reader.read()` 取得数据片段。`done` 表示流是否结束，`value` 是 `Uint8Array`，需要用 `TextDecoder` 解码成文本。下面的代码只演示读取一次，完整消费需要在循环中重复调用 `reader.read()`：
 
 ```ts fold
-const response = await fetch('/api/chat')
+const response = await fetch('/api/chat', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ messages }),
+})
+
+if (!response.body) {
+  throw new Error('模型响应体为空')
+}
+
 const reader = response.body.getReader()
 const decoder = new TextDecoder()
 const { value, done } = await reader.read()
 const text = done ? decoder.decode() : decoder.decode(value, { stream: true })
 ```
 
-一次读取只代表当前可用的字节，不保证对应完整消息。连续读取时要复用同一个 `TextDecoder`，中间片段使用 `{ stream: true }` 保留未完成的字节，流结束时再调用 `decode()` 清空内部缓冲。
+一次读取只能取得当前可用的字节，不保证对应完整消息。连续读取时要复用同一个 `TextDecoder`，中间片段使用 `{ stream: true }` 保留未完成的字节，流结束时再调用 `decode()` 清空内部缓冲。
 
 ## 流数据的处理层次
 
-流处理不是所有链路都经过同样的层次。可以先把数据从网络到 UI 的变化拆开：
+流数据从网络到 UI 通常会逐层转换：
 
-| 层次             | 说明                                                                                 |
-| ---------------- | ------------------------------------------------------------------------------------ |
-| 网络片段         | `reader.read()` 返回的 `value` 是本次读取到的字节，不保证对应一条完整消息。          |
-| 文本片段         | `TextDecoder` 解码后的文本，仍可能只包含半条消息或多条消息的一部分。                 |
-| 协议事件（可选） | 按 SSE 空行边界拼出的完整事件，`event` 名称由发送方约定。                            |
-| 业务事件         | 将供应商返回的字段映射为应用统一的事件类型，例如文本增量、工具状态、错误和结束信号。 |
-| UI 状态          | 业务事件处理器根据事件类型更新界面，例如追加回答、更新状态、展示错误或完成收尾。     |
+| 层次             | 说明                                                                             |
+| ---------------- | -------------------------------------------------------------------------------- |
+| 网络片段         | `reader.read()` 返回的 `value` 是本次读取到的字节，不保证对应一条完整消息。      |
+| 文本片段         | `TextDecoder` 解码后的文本，仍可能只包含半条消息或多条消息的一部分。             |
+| 协议事件（可选） | 按 SSE 空行边界拼出的完整事件，`event` 名称由发送方约定。                        |
+| 业务事件         | 将上游结果映射为应用统一的事件类型，例如文本增量、工具状态、错误和结束信号。     |
+| UI 状态          | 业务事件处理器根据事件类型更新界面，例如追加回答、更新状态、展示错误或完成收尾。 |
 
 不同接入方式经过的处理层次不同：
 
-- 客户端调用模型 API 通常直接消费供应商的协议事件或响应字段，可以不用映射业务事件；
-- 服务端中转会把供应商事件映射成前端约定的业务事件；
-- SDK 或 LangChain 已经返回结构化事件时，可以跳过协议解析，直接映射成业务事件。
+- 客户端调用模型 API 通常直接消费供应商的协议事件或响应字段，可以不建立统一的业务事件层；
+- 服务端中转会把供应商事件映射成应用统一的业务事件；
+- SDK 或 LangChain 已经返回结构化增量时，可以跳过协议解析，直接映射成业务事件。
 
 ## 封装 SSE 流处理方法
 
-后面的服务端示例都会涉及字节解码、SSE 事件组装和响应生命周期。将这些逻辑封装成可复用函数后，业务代码只需读取上游事件、转换字段并写出业务事件。函数只解析本文约定的 `event` 字段，以及 `data` 字段中的 JSON 内容，不覆盖完整的 SSE 规范。
+服务端处理 SSE 时会反复涉及字节解码、事件组装和响应生命周期。将这些逻辑封装后，业务代码只需读取上游事件、转换字段并写出业务事件。这里仅解析本文使用的 `event` 字段和 JSON 格式的 `data` 字段，不覆盖完整的 SSE 规范。
 
-三个函数的职责如下：
+后面的示例都建立在这三个函数上：
 
-| 函数                | 职责                                                               |
-| ------------------- | ------------------------------------------------------------------ |
-| `parseSSE`          | 把 `ReadableStream` 解析成 SSE 事件流，调用方用 `for await` 消费。 |
-| `writeSSE`          | 服务端往 `controller` 写一条 SSE 事件。                            |
-| `createSSEResponse` | 包装一个标准的 SSE `Response`，自动处理取消、错误和结束信号。      |
-
-下面是具体的代码实现：
+| 函数                | 职责                                                                    |
+| ------------------- | ----------------------------------------------------------------------- |
+| `parseSSE`          | 把 `ReadableStream` 解析成 SSE 事件流，调用方用 `for await...of` 消费。 |
+| `writeSSE`          | 服务端向 `controller` 写入一条 SSE 事件。                               |
+| `createSSEResponse` | 包装一个标准的 SSE `Response`，统一处理结束、错误和取消信号。           |
 
 <Tabs>
-<Tab label="parseSSE">
+<Tab label='parseSSE'>
 
-```ts fold
+```ts fold title="lib/sse.ts"
 export async function* parseSSE(body: ReadableStream<Uint8Array>) {
   const reader = body.getReader()
   const decoder = new TextDecoder()
@@ -135,9 +140,9 @@ export async function* parseSSE(body: ReadableStream<Uint8Array>) {
 ```
 
 </Tab>
-<Tab label="writeSSE">
+<Tab label='writeSSE'>
 
-```ts fold
+```ts fold title="lib/sse.ts"
 const encoder = new TextEncoder()
 
 export function writeSSE(
@@ -152,9 +157,9 @@ export function writeSSE(
 ```
 
 </Tab>
-<Tab label="createSSEResponse">
+<Tab label='createSSEResponse'>
 
-```ts fold
+```ts fold title="lib/sse.ts"
 export function createSSEResponse(
   request: Request,
   produce: (
@@ -162,36 +167,31 @@ export function createSSEResponse(
     signal: AbortSignal
   ) => Promise<void>
 ) {
-  const abortController = new AbortController()
-  const handleAbort = () => abortController.abort()
-
-  if (request.signal.aborted) {
-    handleAbort()
-  } else {
-    request.signal.addEventListener('abort', handleAbort, { once: true })
-  }
+  const cancelController = new AbortController()
+  const signal = AbortSignal.any([request.signal, cancelController.signal])
+  let cancelled = false
 
   const stream = new ReadableStream({
     async start(controller) {
       try {
-        await produce(controller, abortController.signal)
-        if (!abortController.signal.aborted) {
+        await produce(controller, signal)
+        if (!signal.aborted) {
           writeSSE(controller, 'done', {})
         }
       } catch (error) {
-        if (!abortController.signal.aborted) {
+        if (!signal.aborted) {
           const message = error instanceof Error ? error.message : '执行失败'
           writeSSE(controller, 'error', { message })
         }
       } finally {
-        request.signal.removeEventListener('abort', handleAbort)
-        if (!abortController.signal.aborted) {
+        if (!cancelled) {
           controller.close()
         }
       }
     },
     cancel() {
-      abortController.abort()
+      cancelled = true
+      cancelController.abort()
     },
   })
 
@@ -207,9 +207,13 @@ export function createSSEResponse(
 </Tab>
 </Tabs>
 
-## 客户端调用模型 API
+## 模型调用方式
 
-客户端直接调用模型 API 是最简单的流处理链路。客户端使用 `parseSSE` 解析响应体中的 SSE 事件，再从返回数据中提取文本增量并更新界面。示例中的 `apiKey` 和 `model` 由用户在本地配置。
+模型流可以由客户端直接消费，也可以先在服务端完成转换，区别在于密钥、鉴权和供应商协议由哪一端管理。
+
+### 客户端调用模型 API
+
+客户端直接调用模型 API 时，可以使用 `parseSSE` 解析响应体，再提取文本增量并更新界面。下面的示例直接处理 Chat Completions 的 SSE 数据，因此客户端需要了解上游响应格式。这种方式适合 demo 和由用户自行管理 API Key 的本地 Agent，示例中的 `apiKey` 和 `model` 由用户在本地配置。
 
 ```ts fold
 import { parseSSE } from '@/lib/sse'
@@ -240,13 +244,11 @@ for await (const { data } of parseSSE(response.body)) {
 }
 ```
 
-它适合 demo，也适合由用户自行管理 API Key 的本地 Agent。其它场景通常应优先通过服务端中转，由服务端统一管理密钥、鉴权、请求控制和供应商协议适配，避免 API Key 暴露在客户端。
+### 服务端中转模型 API
 
-## 服务端中转模型 API
+> 本文使用 Next.js Route Handler 编写服务端示例，但流处理本身不依赖 Next.js，同样适用于其它 Node.js 服务。
 
-服务端中转会先接收客户端请求，再调用模型 API，并将上游流转换为前端约定的业务事件。密钥、鉴权和请求控制也统一在这一层处理。后面的服务端示例统一使用 `OPENAI_API_KEY` 和 `OPENAI_MODEL` 配置 API Key 与模型名称。
-
-下面是一个简化的 HTTP POST 处理函数。
+服务端中转适合需要集中管理密钥、鉴权和请求控制的场景。它接收客户端请求，调用模型 API，再将 Chat Completions 的文本增量映射为统一的 `message` 事件。客户端只需处理这个业务事件，不必依赖上游响应字段。
 
 ```ts fold title="app/api/chat/route.ts"
 import { createSSEResponse, parseSSE, writeSSE } from '@/lib/sse'
@@ -273,11 +275,7 @@ export async function POST(request: Request) {
       throw new Error(`模型请求失败：${response.status}`)
     }
 
-    if (!response.body) {
-      throw new Error('模型响应体为空')
-    }
-
-    for await (const { data } of parseSSE(response.body)) {
+    for await (const { data } of parseSSE(response.body!)) {
       if (data === '[DONE]') break
 
       const payload = JSON.parse(data)
@@ -288,11 +286,9 @@ export async function POST(request: Request) {
 }
 ```
 
-这个处理函数读取 OpenAI Chat Completions API 返回的 SSE，提取 `choices[0].delta.content` 字段，再用 `writeSSE` 写出稳定的 `message` 事件。客户端断开、结束和错误等生命周期逻辑由 `createSSEResponse` 统一处理。这样前端无需依赖 `delta`、`content`、`choices` 等上游字段，后续切换模型或接入 Agent 工具时只需替换上游调用和字段映射。
+### 服务端通过 SDK 调用模型
 
-## 服务端通过 OpenAI SDK 调用模型
-
-如果不想手写请求体、鉴权头和流式响应解析，可以使用 OpenAI 官方 Node SDK。SDK 会将 Responses API 的流式响应转换为带类型的事件，业务代码只需处理需要关注的事件。
+使用供应商 SDK 时，请求体、鉴权和流式响应解析由 SDK 处理。服务端用 `for await...of` 消费返回的流，再将需要的 Responses 事件映射为业务事件。与前一个示例相比，这里不再调用 `parseSSE`，因为 SDK 已经完成了协议解析。
 
 ```ts fold title="app/api/chat/route.ts"
 import OpenAI from 'openai'
@@ -332,11 +328,9 @@ export async function POST(request: Request) {
 }
 ```
 
-SDK 将流式响应包装成 `AsyncIterable`。这个示例只处理文本增量和失败事件，前者转换为应用统一的 `message` 事件，后者交给 `createSSEResponse` 统一处理。接入工具调用时，只需继续映射相应的 Responses 事件，前端仍可使用同一套业务事件协议。
+### 服务端通过 LangChain 调用模型
 
-## 服务端通过 LangChain 调用模型
-
-前两种写法都直接依赖供应商 API。需要统一模型调用方式，或继续接入工具与多步 Agent 时，可以引入 LangChain。LangChain 提供统一的模型调用接口，服务端只需将模型返回的文本增量转换为 `message` 事件。切换供应商时只需更换对应的集成类和配置，前端的流式消费方式保持不变。
+如果希望统一不同供应商的调用方式，或需要接入工具和多步 Agent，可以使用 LangChain。它同样返回可异步迭代的增量，服务端消费 `model.stream()` 的结果，并将其映射为 `message` 等业务事件。这样切换供应商时，通常只需替换对应的模型类和配置，调用方式和业务事件映射可以保持不变。
 
 ```ts fold title="app/api/chat/route.ts"
 import { ChatOpenAI } from '@langchain/openai'
@@ -362,13 +356,11 @@ export async function POST(request: Request) {
 }
 ```
 
-`model.stream()` 返回模型的增量输出。示例将其中的非空文本转换为 `message` 事件，结束、错误和取消仍由 `createSSEResponse` 统一处理。与上一节相比，只有上游模型调用方式发生变化，中转层的业务事件协议保持不变。
-
 ## 客户端消费业务事件流
 
-服务端中转层会把原始 API、SDK 或 LangChain 返回的结果转换成业务事件，客户端只需按约定处理这些事件。Agent 流通常包含以下事件：
+采用服务端中转时，原始 API、SDK 或 LangChain 返回的结果都会先转换为业务事件，客户端再按事件类型分别处理。统一事件可以覆盖文本、工具和生命周期状态：
 
-| 事件类型      | 含义               | 前端行为               |
+| 事件类型      | 含义               | 客户端行为             |
 | ------------- | ------------------ | ---------------------- |
 | `message`     | 模型文本增量       | 追加到回答区域         |
 | `tool_call`   | 工具调用开始或更新 | 展示工具调用状态       |
@@ -377,7 +369,7 @@ export async function POST(request: Request) {
 | `error`       | 生成或执行失败     | 展示错误并结束加载状态 |
 | `done`        | 流结束             | 收尾并允许继续输入     |
 
-这些事件不能全部按文本拼接。以文本流接口为例，前端只需处理 `message`、`error` 和 `done` 三类事件。
+不同事件不能全部作为文本追加。前面的文本流示例只写出了 `message`、`error` 和 `done` 三类事件，客户端可以先用一个事件处理器统一分发：
 
 ```js fold
 function handleAgentEvent(event) {
@@ -400,7 +392,7 @@ function handleAgentEvent(event) {
 
 ### 用 EventSource 消费 SSE
 
-`EventSource` 通过 GET 建立服务端到浏览器的单向 SSE 连接，并按 `event:` 名称自动分发事件。它适合不需要 POST body 或自定义请求头的场景。示例沿用 `/api/chat`，服务端需要在同一路由中提供 GET 处理函数，并通过会话 ID 读取已保存的上下文。
+`EventSource` 通过 GET 建立服务端到浏览器的单向 SSE 连接，并按 `event:` 名称自动分发事件。它适合不需要 POST body 或自定义请求头的场景。下面的示例假设服务端已经提供了对应的 GET SSE 接口，并用 `sessionId` 标识要消费的会话；前面的 POST Route Handler 不能直接作为这个接口使用。
 
 ```ts fold
 const source = new EventSource(
@@ -416,60 +408,30 @@ source.addEventListener('done', () => {
   source.close()
 })
 
-source.addEventListener('error', (e) => {
-  if (e instanceof MessageEvent && e.data) {
-    handleAgentEvent({ type: 'error', ...JSON.parse(e.data) })
+source.addEventListener('error', (event) => {
+  if (event instanceof MessageEvent && event.data) {
+    handleAgentEvent({ type: 'error', ...JSON.parse(event.data) })
     source.close()
     return
   }
 
-  handleAgentEvent({ type: 'error', message: '连接异常' })
-  // 普通连接异常不主动 close，让 EventSource 按浏览器策略自动重连。
+  // 连接异常不调用 close()，EventSource 会自动重连。
 })
 ```
 
-使用 `EventSource` 时要注意以下行为：
-
-- 默认事件名是 `message`，自定义事件（如 `done`、`tool_call`）必须显式 `addEventListener` 才能收到；
-- 这里把业务错误也命名为 `error`，监听器会同时收到服务端发送的 `MessageEvent` 和连接异常产生的普通 `Event`，需要根据 `data` 区分；
-- 普通连接异常后浏览器会自动重连；流正常结束或服务端已返回业务错误时，再手动调用 `close()`。
-
-### EventSource 的自动重连机制
-
-`EventSource` 的连接因网络抖动、代理断开或服务端临时异常而中断时，浏览器会触发 `error` 事件。只要没有调用 `source.close()`，浏览器就会等待一段时间后重新请求同一地址。
-
-服务端可以用 `retry:` 字段设置后续重连间隔，单位为毫秒：
-
-```text
-retry: 3000
-
-event: message
-data: {"content":"hi"}
-```
-
-空行用于结束当前 SSE 事件块。这里只有 `retry:`，因此不会触发业务事件；后面的 `message` 是下一条事件。服务端不发送 `retry:` 时，浏览器使用自身的默认重连间隔。
-
-服务端还可以用 `id:` 标记事件，浏览器会记录最后收到的事件 ID：
-
-```text
-id: 42
-event: message
-data: {"content":"hi"}
-```
-
-重新连接时，浏览器会通过 `Last-Event-ID` 请求头带回该值。服务端可以据此从断点继续推送，但必须自行保存事件历史或进度；浏览器只负责回传事件 ID。
+未指定 `event:` 时，事件名默认为 `message`；自定义事件（如 `done`、`tool_call`）需要显式监听。业务错误和连接异常都会触发 `error` 监听器，但业务错误事件带有 `data`，连接异常通常没有。收到业务错误后调用 `source.close()` 结束连接，连接异常则交给 `EventSource` 自动重连。
 
 ### 用 fetch 消费 SSE
 
-`EventSource` 只支持 GET，且不能直接携带自定义请求头。Chat 或 Agent 接口通常需要通过 POST body 传递消息，并携带鉴权信息和请求上下文，此时可以用 `fetch` 发起请求，再通过 `parseSSE` 解析响应流。
+`EventSource` 只支持 GET，且不能直接携带自定义请求头。Chat 或 Agent 接口通常需要通过 POST body 传递消息，还可能携带鉴权信息和请求上下文。这类接口可以用 `fetch` 发起请求，再通过 `parseSSE` 解析响应流。
 
 ```js fold
 import { parseSSE } from '@/lib/sse'
 
 const response = await fetch('/api/chat', {
+  method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ messages }),
-  method: 'POST',
 })
 
 if (!response.ok) {
@@ -488,11 +450,9 @@ for await (const { event, data } of parseSSE(response.body)) {
 }
 ```
 
-`parseSSE` 负责字节读取、跨 chunk 拼接和 SSE 事件解析。调用方只需解析 JSON，再将业务事件交给 `handleAgentEvent`。
-
 ### 用 Axios 消费 SSE
 
-如果项目已经使用 Axios，可以通过 `onDownloadProgress` 读取响应文本。Axios 负责请求配置和错误处理，SSE 事件拼接仍由业务代码完成。
+如果项目已经使用 Axios，浏览器端可以通过 XHR 的 `onDownloadProgress` 读取不断累积的 `responseText`，再自行拆分 SSE 事件，并暂存未完整接收的片段。
 
 ```js fold
 import axios from 'axios'
@@ -547,32 +507,35 @@ try {
 }
 ```
 
-`onDownloadProgress` 中的 `event.target` 是底层 `XMLHttpRequest`。由于 `responseText` 会不断累积，每次回调只截取新增内容，并把不完整的 SSE 事件留在 `buffer` 中等待下一段数据。Axios 会对下载进度回调进行节流，因此文本增量可能成批到达；如果项目没有依赖 Axios 的实例配置或拦截器，原生 `fetch` + `parseSSE` 更直接。
+:::info 使用建议
+
+Axios 的下载进度回调可能被节流，文本增量可能成批到达。如果不依赖 Axios 的实例配置或拦截器，建议使用 `fetch` + `parseSSE`。
+
+:::
 
 ## 流处理的工程实践
 
-`parseSSE`、`writeSSE` 和 `createSSEResponse` 已封装字节、协议与生命周期处理，业务代码仍要关注部署链路和运行时边界。反向代理、负载均衡器或托管平台可能缓冲响应，导致服务端持续写入，客户端却迟迟收不到事件。部署时应确认整条链路支持流式传输，并关闭代理缓冲。使用 Nginx 时，服务端可以返回 `X-Accel-Buffering: no` 响应头，关闭当前响应的代理缓冲。
+上述方法封装了字节、协议和生命周期处理，但事件能否及时到达客户端还取决于部署链路。反向代理、负载均衡器或托管平台可能缓冲响应，导致服务端持续写入，客户端却迟迟收不到事件。部署时应确认整条链路支持流式传输，并关闭代理缓冲。使用 Nginx 时，服务端可以返回 `X-Accel-Buffering: no` 响应头，关闭当前响应的代理缓冲。
 
-工具调用期间如果长时间没有业务事件，还应发送心跳，并检查各层的空闲超时设置。SSE 注释行不会触发业务事件，可用作心跳，例如 `: ping\n\n`。
+工具执行期间如果长时间没有业务事件，还应发送心跳，并检查各层的空闲超时设置。SSE 注释行不会触发业务事件，可用作心跳，例如 `: ping\n\n`。
 
 ### 处理用户取消和连接关闭
 
-用户停止生成或关闭页面时，前端应通过 `AbortController` 取消请求，服务端也要感知连接关闭并中止上游调用，避免模型继续生成或向已关闭的连接写入数据。
+用户停止生成或离开页面时，客户端应取消当前连接。`fetch` 和 Axios 请求可以使用 `AbortController`，`EventSource` 则调用 `close()`。服务端也要感知连接关闭并中止上游调用，避免模型继续生成或向已关闭的连接写入数据。
 
-`createSSEResponse` 会把 `request.signal` 桥接到内部 `AbortController`，并在响应流取消时调用 `abort()`。业务代码只需将 `signal` 透传给上游 `fetch` 或 `model.stream(..., { signal })`。
+`createSSEResponse` 会合并请求断开和响应流取消产生的信号，两者任一发生都会中止上游调用。业务代码只需将 `signal` 透传给上游 `fetch`、SDK 调用或 `model.stream()`。
 
 ### 将错误作为事件返回
 
-流式接口的错误可能发生在响应开始前或传输过程中。请求校验、鉴权失败等已知错误应在流开始前通过 HTTP 状态码返回；响应开始后，状态码已经发出，上游模型断开或工具超时等错误只能转换成前端可识别的事件。
+流式接口的错误可能发生在响应开始前或传输过程中。请求校验、鉴权失败等已知错误应在流开始前通过 HTTP 状态码返回；响应开始后，状态码已经发出，上游模型断开或工具超时等错误只能转换成客户端可识别的事件。
 
-```json
-{ "type": "error", "message": "模型连接中断" }
+```text
+event: error
+data: {"message":"模型连接中断"}
 ```
 
-前端收到 `error` 事件后，应停止加载、展示原因并允许用户重试。`createSSEResponse` 会在 `produce` 抛错时写出该事件，业务代码只需保留具体的错误上下文。
+客户端收到 `error` 事件后，应停止加载、展示原因并允许用户重试。`createSSEResponse` 会在 `produce` 抛错时写出该事件，业务代码只需保留具体的错误上下文。
 
 ## 总结
 
-Agent 应用中的流处理是一条端到端链路。服务端读取模型输出，完成协议解析和字段映射，再向客户端发送稳定的业务事件。客户端只需按事件类型更新文本、工具状态、错误和完成状态。模型 API、SDK 或框架可以替换，只要业务事件协议保持稳定，前端消费逻辑就无需随上游变化。
-
-实现这条链路时，需要区分网络 chunk、协议事件和业务事件，不能把一次读取结果当成完整消息。用户取消、流内错误、代理缓冲、心跳和连接超时也要贯穿前后端处理，确保事件及时到达，并在取消、错误或超时时正确结束连接。
+流式处理的核心是将网络片段逐层解析为协议事件和业务事件，再由客户端按事件更新 UI。服务端可以根据密钥、鉴权和供应商适配需求选择不同的模型调用方式，同时处理取消、错误、心跳和代理缓冲，确保事件及时到达并正确结束连接。

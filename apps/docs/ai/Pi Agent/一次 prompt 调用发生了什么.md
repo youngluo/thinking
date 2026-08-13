@@ -6,34 +6,35 @@ draft: true
 
 # 一次 prompt 调用发生了什么
 
-本文从一个动作开始：调用 `agent.prompt()`。重点不是模型返回了什么文本，而是一次 Agent 运行如何被拆成可观察的事件，以及工具和用户干预如何改变后续流程。
+调用 `agent.prompt()` 后，Pi 并不只是向模型发送一次请求。模型可能要求执行工具，工具结果会触发新的模型调用，运行期间排队的用户消息也可能继续推动任务。
 
-下面的说明以 Pi commit `936aff00918de1187f085f123c2812d8f2d67745` 为基准。暂时不讨论 Session 持久化、Context Builder 和 AgentHarness，只观察运行时如何推进一次任务。
+本文以 Pi `v0.84.1` 为基准，从事件流观察一次运行如何开始、推进和结束。Session 持久化和 AgentHarness 不在本文范围内。
 
 ## prompt 如何启动一次运行
 
-`prompt()` 是 Agent 的运行入口，但它不等于一次直接的模型调用。调用发生后，Agent 会把输入转换为用户消息，启动一次运行，并在运行过程中发出事件。一次运行至少包含一个 turn；如果模型请求工具，运行时会把工具结果放回上下文，再开始下一轮。
+`prompt()` 是 `Agent` 的运行入口。它先把文本或图片输入转换为用户消息，再创建一个新的 Agent run。运行开始后，`Agent` 会标记运行状态，并按执行进度持续发出事件。
 
-可以先用三个层次理解这些事件：
+事件分为三个层次：
 
 | 层次 | 含义 | 典型边界 |
 | --- | --- | --- |
-| Agent run | 一次从开始到结束的完整运行 | `agent_start` 到 `agent_end` |
+| Agent run | 一次入口调用驱动的完整运行，可以包含多个 turn | `agent_start` 到 `agent_end` |
 | Turn | 一次模型响应及其关联的工具执行 | `turn_start` 到 `turn_end` |
-| Message | 用户、模型或工具结果产生的一条消息 | `message_start` 到 `message_end` |
+| Message | 一条用户消息、assistant 消息或工具结果 | `message_start` 到 `message_end` |
 
-因此，「调用一次 `prompt`」描述的是一个运行边界，而不是一个请求响应对。模型是否调用工具、工具是否产生结果、队列中是否有新的用户输入，都会影响这次运行包含多少个 turn。
+一次 `prompt()` 调用至少包含一个 turn，但不一定只调用一次模型。只要工具结果或消息队列仍要求继续，新的 turn 就会在同一个 Agent run 中启动。Agent 正在运行时不能再次调用 `prompt()`，新的用户输入需要通过 Steering 或 Follow-up 队列进入当前运行。
 
 ## 一次调用的事件序列
 
-下面的流程图只保留运行时能观察到的主链路。没有工具调用时，当前 turn 结束后运行直接结束；有工具调用时，工具结果会先进入上下文，运行时再开始下一轮模型调用。
+下面的流程图展示一次 `prompt()` 调用的主要事件。首个 turn 会先发出用户消息事件，后续 turn 直接基于已有上下文请求模型。
 
 ```d2 fold
 direction: right
 
 prompt: agent.prompt()
 start: agent_start
-turnStart: turn_start
+firstTurn: "turn_start\n首次 turn"
+laterTurn: "turn_start\n后续 turn"
 userStart: "message_start\n用户消息"
 userEnd: message_end
 assistantStart: "message_start\n模型消息"
@@ -47,24 +48,29 @@ toolUpdate: tool_execution_update
 toolEnd: tool_execution_end
 toolResult: "message_start / message_end\n工具结果"
 turnEnd: turn_end
-nextTurn: "下一轮 turn"
+continueDecision: "是否继续？" {
+  class: decision
+}
 end: agent_end
 
-prompt -> start -> turnStart -> userStart -> userEnd
+prompt -> start -> firstTurn -> userStart -> userEnd
 userEnd -> assistantStart -> assistantUpdate -> assistantEnd -> decision
 decision -> turnEnd: 否
 decision -> toolStart: 是
 toolStart -> toolUpdate -> toolEnd -> toolResult -> turnEnd
-turnEnd -> nextTurn: 需要继续
-nextTurn -> turnStart
-turnEnd -> end: 没有后续工作
+turnEnd -> continueDecision
+continueDecision -> laterTurn: 工具或队列仍有工作
+laterTurn -> assistantStart
+continueDecision -> end: 没有后续工作
 ```
 
-这里的「下一轮」不是递归调用 `prompt()`。它仍属于同一次 Agent run，只是运行时把上一轮的 assistant 消息和 tool result 消息交给下一次模型调用。
+图中的后续 turn 不是再次调用 `prompt()`。运行时会把上一轮的 assistant 消息和 `toolResult` 消息加入上下文，再发起下一次模型调用。工具批次也可以通过 `terminate` 结果停止自动续跑，因此产生工具调用并不意味着一定还有下一轮。
 
 ## 模型输出与工具事件
 
-模型响应以消息事件的形式进入事件流。流式输出时，运行时先发出 `message_start`，随后多次发出 `message_update`，最后以 `message_end` 标记完整的 assistant 消息。文本界面通常只处理其中的 `text_delta`，把每个增量追加到当前输出。
+模型响应通过消息事件进入事件流。流式输出开始时，运行时发出 `message_start`；生成过程中持续发出 `message_update`；响应完成后，再用 `message_end` 给出最终 assistant 消息。
+
+`message_update` 携带底层 `AssistantMessageEvent`。它既可能是文本增量，也可能是 thinking 或工具调用的开始、增量和结束事件。界面可以只渲染 `text_delta`，也可以同时呈现推理和工具调用状态。
 
 工具事件表达的是模型之外的本地执行过程：
 
@@ -74,20 +80,28 @@ turnEnd -> end: 没有后续工作
 | `tool_execution_update` | 工具主动报告执行进度，可选 |
 | `tool_execution_end` | 工具执行结束，携带结果或错误 |
 
-工具执行结束后，运行时还会产生一条 `toolResult` 消息。它不是模型的又一次输出，而是下一轮模型调用的输入。这样就形成了清晰的边界：模型提出工具调用，运行时执行工具，工具结果再交给模型判断下一步。
+工具执行结束后，运行时把结果封装成 `toolResult` 消息，并为它发出 `message_start` 和 `message_end`。模型只负责提出结构化调用，真正的本地执行发生在运行时之外的工具实现中；下一轮模型调用看到的是回注后的 `toolResult` 消息。
 
-一个最小的事件订阅者可以只记录事件类型：
+一个最小的订阅者可以直接消费文本增量：
 
 ```ts fold title="observe-agent.ts"
 const unsubscribe = agent.subscribe((event) => {
-  console.log(event.type);
+  if (
+    event.type === "message_update" &&
+    event.assistantMessageEvent.type === "text_delta"
+  ) {
+    process.stdout.write(event.assistantMessageEvent.delta);
+  }
 });
 
-await agent.prompt("Read src/utils and suggest the next change.");
-unsubscribe();
+try {
+  await agent.prompt("Read src/utils and suggest the next change.");
+} finally {
+  unsubscribe();
+}
 ```
 
-如果要构建界面，可以在同一个订阅者中分别处理消息增量、工具开始和工具结束。事件订阅者消费的是运行过程，不需要拥有 Agent Loop 本身。
+`Agent.subscribe()` 会按注册顺序等待异步监听器。产品可以在 `message_end` 时先保存消息，再让运行时进入工具预检。低层 `agentLoop()` 返回的事件流只保留事件顺序，不会等待消费方完成异步处理。
 
 ## Event 与 Hook 的区别
 
@@ -95,21 +109,29 @@ Event 和 Hook 都出现在 Agent 运行过程中，但承担的职责不同：
 
 | 机制 | 作用 | 是否改变运行 |
 | --- | --- | --- |
-| Event | 告知界面或外部系统某个阶段已经开始、更新或结束 | 默认只观察 |
-| Hook | 在工具、上下文或轮次边界上提供拦截和修改机会 | 可以阻止、替换或追加行为 |
+| Event | 描述某个阶段已经开始、更新或结束 | 默认只观察 |
+| Hook | 在工具和 turn 边界参与运行决策 | 可以阻止执行、修改结果或停止循环 |
 
-`agent.subscribe()` 收到的是事件流，例如 `message_update` 和 `tool_execution_end`。`beforeToolCall`、`afterToolCall` 和 `shouldStopAfterTurn` 则属于运行时 Hook，它们由 Agent Loop 主动调用，并可以影响后续执行。
+`agent.subscribe()` 接收 `message_update`、`tool_execution_end` 等事件。`beforeToolCall`、`afterToolCall` 和 `shouldStopAfterTurn` 则由 Agent Loop 在固定边界主动调用，分别用于执行前拦截、执行后调整结果，以及在当前 turn 完成后停止循环。
 
-把两者分开，界面就不需要通过修改事件来控制 Agent，运行时也能明确哪些扩展点允许改变行为。事件由 `Agent` 类和底层 Agent Loop 发出，Hook 则由循环在对应边界主动调用。
+Event 说明「发生了什么」，Hook 决定「接下来是否照常执行」。两套机制分开后，界面可以专注于消费事件，运行策略则集中在明确的 Hook 边界中。
 
 ## 一次调用如何结束
 
-`turn_end` 只表示当前 turn 已经完成，不代表整个 `prompt()` 调用结束。运行时还会检查是否存在待处理的工具或其它队列消息，必要时继续开始新的 turn。
+`turn_end` 只表示当前模型响应及其工具执行已经完成。随后，运行时按顺序判断是否继续：
 
-当没有后续工作时，运行时发出 `agent_end`，它是这次 Agent run 的最终事件。`prompt()` 会在这次运行完成后返回；如果订阅者对 `agent_end` 注册了异步处理，运行也会等待这些处理完成。
+- `shouldStopAfterTurn` 要求停止时，直接结束本次运行；
+- 工具结果仍需交给模型时，开始下一轮；
+- Steering 队列中有消息时，将消息注入下一轮；
+- 没有工具和 Steering 消息后，再检查 Follow-up 队列；
+- 所有来源都没有后续工作时，发出 `agent_end`。
 
-这一区分对产品界面很重要。`turn_end` 适合更新当前步骤的状态，`agent_end` 才适合解除加载状态、保存本轮结果或通知上层任务已经结束。
+`continue()` 是另一个运行入口。它不会创建新的用户消息，而是从现有上下文启动一个新的 Agent run，适合错误重试或恢复中断的流程。上下文最后一条消息通常必须是用户消息或 `toolResult`；如果最后一条是 assistant 消息，只有已经排队的 Steering 或 Follow-up 消息可以继续运行。
+
+`agent_end` 是 `Agent` 低层运行的最后一个事件，但不是异步调用立即返回的信号。`Agent` 会先等待所有 `agent_end` 监听器完成，再让 `prompt()`、`continue()` 和 `waitForIdle()` 结束，此时 `isStreaming` 才恢复为 `false`。
+
+`coding-agent` 在此之上增加了 `agent_settled`。`AgentSession` 会在 `agent_end` 后继续处理自动重试、Compaction，以及结束事件监听器新加入的队列消息；这些工作全部完成后，才发出 `agent_settled`。因此，`turn_end` 表示一轮完成，`agent_end` 表示一次低层运行完成，`agent_settled` 才表示产品层的连续处理已经结束。
 
 ## 小结
 
-一次 `prompt()` 调用至少包含一个 turn。每个 turn 由用户消息、模型消息和可选的工具执行组成，工具结果会作为下一轮模型调用的输入。运行时通过事件把这些阶段暴露给界面，同时保留对队列、执行边界和结束时机的控制。
+`prompt()` 启动的是一个 Agent run，而不是固定的一次模型请求。run 由一个或多个 turn 组成，消息事件描述模型输出，工具事件描述本地执行，工具结果和排队消息决定是否继续下一轮。Event 暴露运行过程，Hook 控制关键边界，`agent_end` 与 `agent_settled` 则分别标记运行时和产品层的结束时机。

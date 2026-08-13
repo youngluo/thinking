@@ -5,7 +5,7 @@ order: 7
 
 # SSE 和 NDJSON 指南
 
-在 AI 应用中，模型通常需要一段时间才能生成完整答案。如果服务端等完整答案生成后再返回，会让用户等待较长时间，影响使用体验。流式输出可以让服务端边生成边返回，前端页面则可以同步展示已生成的内容，让用户更早获得反馈。本文介绍两种常见方案：SSE 和基于 HTTP 响应的 NDJSON 流，并说明它们在数据格式、浏览器 API 和事件语义上的区别。
+流式响应会按产生顺序返回数据，客户端可以在完整结果生成前开始处理。SSE 和 NDJSON 都能承载 HTTP 流，但它们在数据边界、浏览器 API 和重连语义上有所不同。本文从数据格式和请求方式出发，说明两种方案的适用场景，以及流式输出结构化 JSON 时需要注意的问题。
 
 ## SSE 是什么
 
@@ -74,7 +74,7 @@ data: {"usage":{"outputTokens":42}}
 
 浏览器端可以直接用 `EventSource` 发起请求并接收事件：
 
-```ts
+```ts fold
 const source = new EventSource('/api/chat/stream')
 
 source.addEventListener('message', (event) => {
@@ -117,7 +117,7 @@ GET /api/chat/abc/events
 
 第二种是用 `fetch` 发 `POST`，服务端仍然返回 `text/event-stream`：
 
-```ts
+```ts fold
 const response = await fetch('/api/chat', {
   method: 'POST',
   headers: {
@@ -128,6 +128,31 @@ const response = await fetch('/api/chat', {
 ```
 
 这种方式的请求输入更自由，但浏览器端不能直接使用原生 `EventSource`，需要借助兼容 SSE 规则的解析器处理多行 `data:`、换行格式、注释以及跨网络分块的事件数据。
+
+### 自动重连机制
+
+以浏览器的 `EventSource` 为例，连接因网络抖动、代理断开或服务端临时异常而中断时，浏览器会触发 `error` 事件，并在未调用 `source.close()` 的情况下自动重连。
+
+服务端可以用 `retry:` 设置重连间隔：
+
+```text
+retry: 3000
+
+event: message
+data: {"content":"hi"}
+```
+
+这里的 `retry:` 只用于设置重连间隔，不会触发业务事件；后面的 `message` 才是下一条事件。
+
+服务端还可以用 `id:` 标记事件：
+
+```text
+id: 42
+event: message
+data: {"content":"hi"}
+```
+
+重新连接时，浏览器会通过 `Last-Event-ID` 请求头带回该值。服务端需要自行保存事件历史或进度，才能据此从断点继续推送，否则客户端可能重复消费或丢失上下文。
 
 ### 适用场景
 
@@ -274,7 +299,7 @@ data: {"count":2}
 
 这种情况最简单，浏览器端收到一条解析一条即可：
 
-```ts
+```ts fold
 const source = new EventSource('/api/items/stream')
 
 source.addEventListener('message', (event) => {
@@ -322,7 +347,7 @@ data: {}
 
 解决方式是维护一个 `raw` 缓冲区。每次收到 `message` 就追加文本，用支持不完整 JSON 的解析器尝试生成草稿；正常收到 `done` 后，再用严格的 `JSON.parse` 和 schema 校验确认最终结果。
 
-```ts
+```ts fold
 const source = new EventSource('/api/summary/stream')
 
 let raw = ''
@@ -349,22 +374,15 @@ source.addEventListener('done', () => {
 
 ## 如何选择
 
-SSE 定义事件如何组织，NDJSON 定义 JSON 记录如何按行分隔。在本文讨论的 HTTP 响应模式中，两者都由客户端发起请求，服务端持续返回数据。
-
-它们的核心差异可以归纳为：
+SSE 和 NDJSON 都可以用于 HTTP 流式响应。SSE 还定义了事件类型、事件 ID 和重连机制，NDJSON 只规定以换行符分隔 JSON 记录，它们的核心差异如下：
 
 | 维度       | SSE                                            | NDJSON                                   |
 | ---------- | ---------------------------------------------- | ---------------------------------------- |
 | 定位       | 标准事件流格式                                 | 通用数据编码格式                         |
-| 通信方向   | 服务端到客户端                                 | 取决于承载通道，本文场景为服务端流式返回 |
-| 浏览器 API | `EventSource`，也可以使用 `fetch`              | `fetch` + `ReadableStream`               |
-| 请求方式   | `EventSource` 只支持 `GET`，`fetch` 不受此限制 | 使用 `fetch`，可用 `GET` 或 `POST`       |
+| 请求方式   | `EventSource` 或 `fetch`                       | `fetch`                                  |
 | 数据边界   | 文本事件之间用空行分隔                         | 每个 JSON 值以换行符结束                 |
 | 事件语义   | 内置 `data`、`event`、`id` 和 `retry` 等字段   | 字段结构完全由应用约定                   |
 | 重连支持   | `EventSource` 内置自动重连和 `Last-Event-ID`   | 需要应用自己实现                         |
-| 二进制支持 | 不适合                                         | 不适合，通常传输文本 JSON                |
 | 典型场景   | AI 文本流、进度、通知和日志                    | 批处理结果、跨服务数据流和结构化事件     |
 
-如果主要面向浏览器，并且需要标准事件字段、自动重连或 `Last-Event-ID`，优先使用 SSE。请求需要 `POST`、JSON 请求体或自定义请求头时，仍然可以通过 `fetch` 接收 SSE，不必因此改用 NDJSON。如果只需要一行一条 JSON 记录，或者数据还要提供给 CLI 和其它服务读取，NDJSON 通常更直接。
-
-无论选择 SSE 还是 NDJSON，都要确认应用服务器和代理不会缓冲响应，并考虑空闲超时、客户端取消和异常中断等情况。响应开始后无法再用新的 HTTP 状态码报告错误，因此服务端通常需要发送应用层错误事件，或者直接结束连接。
+需要按事件类型处理消息或使用浏览器自动重连时，选择 SSE；只需逐行传输完整 JSON，且客户端不局限于浏览器时，选择 NDJSON。
