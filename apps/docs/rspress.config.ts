@@ -44,28 +44,21 @@ const SIDEBAR_GROUP_ORDERS: Record<string, string[]> = {
     'BFF',
     '性能优化与监控',
   ],
-  [AI_PATH]: ['AI 工程', 'Agent', 'Pi Agent'],
+  [AI_PATH]: ['AI 工程', 'Agent', 'Pi Agent', 'DeepSeek Harness'],
   [CODE_PATH]: ['算法', '设计模式', '数据结构', '函数式', '工具函数'],
 }
+
 const d2PreRenderOptions: D2PreRenderOptions = {
   prelude: `
-  classes: {
-    group: {
-      style.fill: "#FEFAF1"
-    }
-    subgroup: {
-      style.fill: "#FFFDF9"
-    }
-    fail: {
-      style.fill: "#ffcdd2"
-    }
-    ok: {
-      style.fill: "#c8e6c9"
-    }
-    decision: {
-      style.fill: "#E5CFF0"
+  vars: {
+    d2-config: {
+      theme-overrides: {
+        B1: "#333"
+        B2: "#333"
+      }
     }
   }
+
 
   ***.style.stroke-width: 1
   (*** -> ***)[*]: {

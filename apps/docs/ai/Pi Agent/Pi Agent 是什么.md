@@ -7,16 +7,16 @@ order: 1
 
 Pi 是一套面向编码任务的 Agent Harness。它将模型、上下文、工具和 Agent Loop 组织起来，让 Agent 能够持续执行任务。Pi 提供可直接使用的编码 Agent，并将模型通信、Agent Runtime、编码产品和终端 UI 拆分为可组合的独立模块。
 
-本系列以 Pi v0.84.1 为基准，将它作为一个可运行、可阅读的 Harness 样本，沿着一次任务的执行链路分析各模块如何协作，理解 Harness Engineering 的具体实现，并说明这些机制如何用于构建自己的 Agent 产品。
+本系列以 Pi v0.84.2 为基准，将它作为一个可运行、可阅读的 Harness 样本，沿着一次任务的执行链路分析各模块如何协作，理解 Harness Engineering 的具体实现，并说明这些机制如何用于构建自己的 Agent 产品。
 
 ## 为什么值得学习
 
-Pi 把编码 Agent 运行所需的最小闭环放进核心；在此基础上，默认编码 Agent 只提供 `read`、`write`、`edit` 和 `bash` 四个基础工具，其它能力则通过 Extensions、Skills、Prompt Templates 和产品层按需接入。核心足够小，可以直接完成真实编码任务，也便于阅读、替换和重组。
+Pi 的核心只保留编码 Agent 运行所需的最小闭环。默认启用 `read`、`write`、`edit` 和 `bash` 四个基础工具，`grep`、`find` 和 `ls` 等其它内置工具可以按需启用，默认工具集合也可以通过 `defaultTools` 配置。其它能力则通过 Extensions、Skills、Prompt Templates 和产品层按需接入。核心足够小，可以直接完成真实编码任务，也便于阅读、替换和重组。
 
 这套设计的价值主要体现在几个方面：
 
 - **闭环完整**：模型响应、工具调用、结果回注和下一轮调用，串起持续执行的任务链路；
-- **任务可持续**：Session 保存消息树，支持继续、分支和上下文压缩，适合长时间编码任务；
+- **任务可持续**：Session 管理消息历史，支持继续、分支和上下文压缩，适合长时间编码任务；
 - **模型可替换**：`pi-ai` 统一模型接口与事件格式，Runtime 无需逐一适配 Provider；
 - **过程可观察**：模型输出和工具执行过程以事件流向外暴露，便于追踪任务如何推进和定位异常；
 - **边界清楚**：模型通信、Agent Runtime 和编码产品分层组织，每层都有明确的替换或扩展位置；
@@ -24,7 +24,7 @@ Pi 把编码 Agent 运行所需的最小闭环放进核心；在此基础上，�
 
 ## 核心架构
 
-下面介绍 Agent 主链路涉及的几个核心包及其职责：
+下面只介绍 Agent 主链路涉及的几个核心包及其职责，远程会话等其它集成包暂不展开：
 
 | 包                | 职责                                                 |
 | ----------------- | ---------------------------------------------------- |
@@ -45,56 +45,56 @@ vars: {
 
 direction: down
 
-project: "Pi 项目" {
-  class: group
+title: |md
+  # Pi Agent
+| {near: top-center}
 
-  product: "产品层 pi-coding-agent" {
-    class: subgroup
-    cli: "CLI / SDK / RPC"
-    session: AgentSession
-    tools: 编码工具
-    resources: "Extensions / Skills"
-  }
-
-  runtime: "运行时 pi-agent-core" {
-    class: subgroup
-    agent: Agent
-    loop: "Agent Loop"
-    state: 状态和事件
-  }
-
-  model: "模型通信 pi-ai" {
-    class: subgroup
-    providers: "Provider 适配"
-    protocol: "消息和 EventStream"
-  }
-
-  surface: "终端 UI" {
-    class: subgroup
-    tui: pi-tui
-  }
-
-  telemetry: "观测层" {
-    class: subgroup
-    package: pi-telemetry
-  }
+product: "产品层 pi-coding-agent" {
+  class: subgroup
+  cli: "CLI / SDK / RPC"
+  session: AgentSession
+  tools: 编码工具
+  resources: "Extensions / Skills"
 }
 
-project.product -> project.runtime: 创建任务并注入模型、工具和 Session 能力
-project.runtime -> project.model: 调用模型
-project.model -> project.runtime: 返回流式事件
-project.runtime -> project.product: 发出运行事件和工具结果
-project.product -> project.surface: 驱动终端交互
-project.surface -> project.product: 提交用户输入
-project.model -> project.telemetry: 传递遥测上下文
-project.runtime -> project.telemetry: 使用 Agent/Harness Schema
+runtime: "运行时 pi-agent-core" {
+  class: subgroup
+  agent: Agent
+  loop: "Agent Loop"
+  state: 状态和事件
+}
+
+model: "模型通信 pi-ai" {
+  class: subgroup
+  providers: "Provider 适配"
+  protocol: "消息和 EventStream"
+}
+
+surface: "终端 UI" {
+  class: subgroup
+  tui: pi-tui
+}
+
+telemetry: "观测层" {
+  class: subgroup
+  package: pi-telemetry
+}
+
+product -> runtime: 创建任务并注入模型、工具和 Session 能力
+runtime -> model: 调用模型
+model -> runtime: 返回流式事件
+runtime -> product: 发出运行事件和工具结果
+product -> surface: 驱动终端交互
+surface -> product: 提交用户输入
+model -> telemetry: 传递遥测上下文
+runtime -> telemetry: 使用 Agent/Harness Schema
 ```
 
 一次任务通常从产品层接收用户输入开始：Runtime 将上下文和工具定义交给 `pi-ai`，模型返回文本或结构化工具调用；Runtime 校验并执行工具，把结果写回上下文，再继续下一轮模型调用，直到模型给出最终响应或任务被中止。产品层消费运行事件并更新界面，`pi-tui` 负责终端布局、输入和输出；SDK、RPC 等其它接入方式则由产品层对接外部宿主。
 
 ## 设计哲学
 
-Pi 的核心取舍是把 Agent 的通用运行机制与具体产品能力分开。`pi-ai` 处理模型接入，Runtime 处理 Agent Loop、工具边界、状态和事件，`pi-coding-agent` 负责把 Session、工具和资源组装成编码产品，界面负责消费事件并呈现交互。新增能力通常由产品层或扩展层承载，核心运行时保持稳定。
+Pi 的核心取舍是把 Agent 的通用运行机制与具体产品能力分开。`pi-ai` 处理模型接入，Runtime 处理 Agent Loop、工具边界、状态和事件，`pi-coding-agent` 负责把 Session、工具和资源组装成编码产品，界面负责消费事件并呈现交互。新增能力通常由产品层或扩展层承载，核心运行时保持最小闭环。
 
 Pi 默认不提供内置权限系统，进程会继承启动者的权限。需要确认、路径保护或更强隔离时，可以由产品或扩展提供策略，也可以使用容器或沙箱。扩展和 Pi Packages 会以当前进程权限运行，安装第三方内容前应先审查源码。
 

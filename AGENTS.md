@@ -132,11 +132,9 @@ Rspress 文档位于 `apps/docs/`。文档生成脚本是 `scripts/generate-docs
 
 - 表示流程（如数据流、调用链、状态转换、流水线步骤）时，避免使用 ```text 代码块，应优先使用 d2 图。
 - D2 全局样式统一配置在 `apps/docs/rspress.config.ts` 的 `d2PreRenderOptions` 中，单篇文档不要重复声明全局样式或切换主题。
-- 只维护少量语义 class，其他节点、分组标题和连线默认使用 D2 样式；不要单独设置文字颜色、线条颜色、边框、圆角、箭头样式。
-- 当前全局 class：group、subgroup、fail、decision。
 - 所有节点、分组标题和连线都使用 D2 默认样式；不要单独设置文字颜色、线条颜色、边框、圆角、箭头样式。
-- 分组容器使用 `class: group`。
-- 嵌套分组容器使用 `class: subgroup`。
-- 判断节点使用 `class: decision`。
-- 普通节点不设置 `class`；除 `group`、`subgroup`、`fail`、`decision` 之外，不新增全局 class。单篇文档确有语义需要时再局部定义。
-- 控制节点大小时使用 `width` 和 `height`；D2 没有通用 CSS 式 `padding`，需要更大留白时优先增大节点尺寸。
+
+复杂架构图通用规则：
+
+- 最外层系统名使用 D2 `title`（如 `title: |md` 配合 `{near: top-center}`）；分组只表达真实的结构边界，不为装饰增加外层容器。按对象间的实际关系安排层级，避免把并列对象强行嵌套。
+- `grid-rows`、`grid-columns` 适合强调等距对齐，但网格内的连线会采用中心到中心的直线。需要弧线或自动寻路时，优先使用普通布局；确需使用网格时，再通过 `vertical-gap` 或 `horizontal-gap` 为连线标签留出空间。

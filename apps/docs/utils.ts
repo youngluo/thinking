@@ -35,6 +35,8 @@ export type SidebarItem =
   | {
       text: string
       items: Array<{ text: string; link: string }>
+      collapsible: boolean
+      collapsed: boolean
     }
 
 export function getSiteUrl(siteOrigin: string, pathname = '') {
@@ -256,6 +258,8 @@ export function getGeneratedSidebar(
 
       return {
         text,
+        collapsible: true,
+        collapsed: true,
         items: sortedItems.map((item) => ({
           text: item.sidebarText,
           link: item.link,

@@ -45,7 +45,6 @@ let d2TaskQueue: Promise<unknown> = Promise.resolve()
 const defaultRenderOptions: CompileOptions = {
   noXMLTag: true,
   sketch: true,
-  themeID: 8,
   pad: 32,
 }
 
