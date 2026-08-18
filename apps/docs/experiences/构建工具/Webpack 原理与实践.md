@@ -60,7 +60,7 @@ Compiler 是一次 Webpack 运行的总控制器，保存配置并管理生命�
 
 Webpack 先构建 module graph，再据此生成 chunk graph。前者记录模块间的依赖，后者记录模块与 chunk 的归属，以及 chunk 之间的加载关系。
 
-构建 module graph 时，Webpack 从 `entry` 开始解析路径、创建模块并转换内容，再由 parser 从转换结果中识别 `import`、`require`、动态导入和 CSS 资源引用等依赖。发现新依赖后，Webpack 会重复这一过程，直到没有新的模块需要处理。动态导入还会标记异步加载边界，供后续 chunk graph 使用。
+构建 module graph 时，Webpack 从 `entry` 开始收集依赖。resolver 先将模块请求解析为文件路径，Webpack 创建模块并执行 loader 转换，parser 再提取依赖信息。发现新依赖后，Webpack 会重复这一过程，直到没有新的模块需要处理。动态导入还会标记异步加载边界，供后续 chunk graph 使用。
 
 module graph 完成后，Webpack 会根据入口和动态导入边界建立 chunk，再应用 `splitChunks` 规则调整分组。入口及其同步依赖通常进入初始 chunk，动态导入分支形成异步 chunk，可复用模块则可能被提取到公共 chunk。
 
@@ -69,12 +69,12 @@ module graph 完成后，Webpack 会根据入口和动态导入边界建立 chun
 模块与 chunk 的关系确定后，Webpack 会先优化 chunk，再生成 asset 并写入输出目录：
 
 - **优化 chunk**：Webpack 在 chunk graph 的基础上调整 chunk 的内容与边界。Tree Shaking 会标记未使用的导出，减少最终生成的代码；
-- **生成 asset**：Webpack 根据 chunk 生成 JavaScript bundle，资源模块、loader 或 plugin 还可以生成 CSS、图片、字体、HTML 和 source map 等资源。bundle 和这些资源都属于 asset，统一记录在本次 compilation 中，并可通过 `compilation.hooks.processAssets` 继续处理；
+- **生成 asset**：chunk 是构建过程中的模块分组，不直接等同于输出文件。Webpack 会将 chunk 生成 JavaScript bundle，bundle 是 asset 的一种；资源模块、loader 或 plugin 还可以生成 CSS、图片、字体、HTML 和 source map 等其它 asset。所有 asset 都会记录在本次 compilation 中，并可通过 `compilation.hooks.processAssets` 继续处理；
 - **emit 写入**：所有 asset 准备完成后，Compiler 进入 emit 阶段。`output.path` 指定输出目录，`output.filename` 和 `output.chunkFilename` 分别确定初始、非初始 chunk 的文件名，`output.assetModuleFilename` 确定资源模块的文件名。Webpack 随后通过输出文件系统写入这些 asset。
 
 ### Webpack Runtime
 
-Webpack Runtime 是随构建产物注入的运行时代码，负责注册和执行模块、缓存模块结果，以及按需加载异步 chunk。下面以 `import('./src/settings.js')` 为例，展示 chunk 加载、模块注册和执行过程，省略 public path、错误处理和 HMR 等细节：
+Webpack Runtime 是随构建产物注入的运行时代码，负责注册和执行模块、缓存模块结果，以及按需加载异步 chunk。实际 runtime 还会根据 `publicPath` 计算 chunk URL，并处理加载失败和 HMR；下面只保留 `import('./src/settings.js')` 对应的加载、注册和执行过程：
 
 ```js fold title="webpack runtime（简化）"
 // 模块 ID 到模块工厂函数的映射
@@ -132,7 +132,7 @@ window.registerChunk({
 
 ### 热更新
 
-HMR 处理开发模式下的模块更新。文件保存后，Webpack 只重新编译受影响模块并生成 hot update chunk；dev server 将更新通知发送给浏览器 runtime。runtime 加载更新模块后检查 HMR accept 边界，命中时替换局部模块，未命中时通常回退到整页刷新：
+HMR 处理开发模式下的模块更新。文件保存后，Webpack 只重新编译受影响模块，生成 update manifest 和 hot update chunk；dev server 通知浏览器 runtime。runtime 请求 manifest，加载变更 chunk 后检查 HMR accept 边界，命中时替换局部模块，未命中时通常回退到整页刷新：
 
 ```d2 maxHeight=420
 shape: sequence_diagram
@@ -144,23 +144,30 @@ runtime: Browser Runtime
 
 source -> compiler: 文件保存
 compiler -> compiler: 重新编译受影响模块
-compiler -> dev: 生成 hot update chunk
-dev -> runtime: 推送 hot update
-runtime -> runtime: 拉取更新模块
+compiler -> dev: 生成 update manifest 和 hot update chunk
+dev -> runtime: 通知有更新
+runtime -> runtime: 请求 update manifest
+runtime -> runtime: 拉取变更模块
 runtime -> runtime: 检查 HMR accept 边界
 runtime -> runtime: 命中 -> 局部替换
 runtime -> runtime: 未命中 -> 整页刷新
 ```
 
-局部更新取决于更新链路上是否存在可以接受更新的边界。业务代码可以通过 `module.hot.accept` 声明边界：
+局部更新取决于更新链路上是否存在可以接受更新的边界。业务代码可以通过 HMR API 声明更新边界：
 
-```js title="src/index.js"
+```js fold title="src/index.js"
 function updatePage() {
   // 重新读取 foo，并更新当前页面
 }
 
+// CommonJS 模块
 if (module.hot) {
   module.hot.accept('./foo', updatePage)
+}
+
+// 严格 ESM 模块
+if (import.meta.webpackHot) {
+  import.meta.webpackHot.accept('./foo', updatePage)
 }
 ```
 
@@ -195,7 +202,7 @@ module.exports = {
 
 plugin 通过 hooks 介入 Webpack 的构建生命周期，入口是 `apply(compiler)`。`compiler.hooks` 面向一次完整构建，`compilation.hooks` 面向一次具体编译，可以处理模块、chunk 和 asset：
 
-```js title="plugins/BuildDonePlugin.js"
+```js fold title="plugins/BuildDonePlugin.js"
 class BuildDonePlugin {
   apply(compiler) {
     compiler.hooks.done.tap('BuildDonePlugin', () => {
@@ -214,6 +221,10 @@ class BuildDonePlugin {
 - `BundleAnalyzerPlugin`：分析产物体积和模块来源。
 
 一个插件可以通过多个 hooks 影响不同阶段。遇到产物内容异常、资源没有输出或环境变量替换错误时，应先定位对应插件，再沿着它注册的生命周期钩子排查。
+
+## Parser
+
+parser 负责分析模块语法并生成 Webpack 的依赖信息。它会识别 `import`、`require()` 和 `import()` 等依赖请求，记录 `export` 与导出使用情况，再把依赖写入 module graph。静态 `import` 会形成同步依赖，动态 `import()` 会创建异步依赖边界，供 chunk graph 生成异步 chunk；导出使用信息则参与 Tree Shaking。parser 只分析代码，不执行模块。
 
 ## 优化路径
 
@@ -247,7 +258,7 @@ analysis -> mark -> optimize -> minify
 
 Webpack 在 production 模式下默认会分析导出使用情况，也可以显式配置 `optimization.usedExports`：
 
-```js title="webpack.config.js"
+```js fold title="webpack.config.js"
 module.exports = {
   mode: 'production',
   optimization: {
@@ -262,7 +273,7 @@ module.exports = {
 
 `sideEffects` 声明模块是否包含顶层副作用，`usedExports` 标记模块中被使用的导出。Webpack 可以在 `package.json` 中配置 `sideEffects`：
 
-```json title="package.json"
+```json fold title="package.json"
 {
   "sideEffects": false
 }
@@ -272,9 +283,9 @@ module.exports = {
 
 如果只有部分文件有副作用，可以只声明这些文件：
 
-```json title="package.json"
+```json fold title="package.json"
 {
-  "sideEffects": ["*.css", "./src/polyfills.js"]
+  "sideEffects": ["**/*.css", "./src/polyfills.js"]
 }
 ```
 
@@ -338,7 +349,7 @@ module.exports = {
 
 路由级动态导入通常是收益最稳定的分包方式：
 
-```js title="src/router.js"
+```js fold title="src/router.js"
 const SettingsPage = () => import('./pages/settings')
 const ReportPage = () => import('./pages/report')
 ```
@@ -388,11 +399,11 @@ Module Federation 还需要单独处理 `remoteEntry`。host 先加载它，再�
 
 ## 构建提速
 
-Webpack 构建变慢时，先建立耗时基线，定位瓶颈是在模块解析、loader 转换、压缩、source map、插件还是文件监听，再按「缩小查找范围 → 压缩与 source map → 持久化缓存」逐项处理。
+Webpack 构建变慢时，先建立耗时基线，定位瓶颈是在模块解析、loader 转换、压缩、source map、插件还是文件监听，再按「缩小查找范围 → 转译与并行 → 压缩与 source map → 持久化缓存」逐项处理。
 
 ### 缩小查找范围
 
-构建提速的共同思路是缩小 Webpack 的查找和处理范围。解析阶段只保留实际使用的文件后缀，通过 `alias` 固定模块路径；loader 用 `include` 限定扫描目录；对确认没有依赖声明的完整库用 `noParse` 跳过 parser，对不需要的可选资源用 `IgnorePlugin` 排除模块请求。示例配置如下：
+构建提速可以先从缩小 Webpack 的查找和处理范围入手。解析阶段只保留实际使用的文件后缀，通过 `alias` 固定模块路径；loader 用 `include` 限定扫描目录；对确认没有依赖声明的完整库用 `noParse` 跳过 parser，对不需要的可选资源用 `IgnorePlugin` 排除模块请求。示例配置如下：
 
 ```js fold title="webpack.config.js"
 const path = require('path')
@@ -412,10 +423,11 @@ module.exports = {
     noParse: /jquery|lodash/,
     rules: [
       {
+        // 匹配 JS、JSX、TS 和 TSX 文件
         test: /\.[jt]sx?$/,
         // 只让 loader 处理 src 目录
         include: path.resolve(__dirname, 'src'),
-        use: 'swc-loader',
+        use: 'babel-loader',
       },
     ],
   },
@@ -429,7 +441,66 @@ module.exports = {
 }
 ```
 
-在兼容性允许时，可以用 `swc-loader` 或 `esbuild-loader` 替代部分 Babel 转换；TypeScript 的类型检查和转译也可以拆开，构建时只负责转译，类型检查交给 `fork-ts-checker-webpack-plugin` 或独立命令。
+### 转译与并行
+
+转译是构建耗时的重要来源。`swc-loader` 基于 Rust 实现，通常比 Babel 更快，负责代码转译；`ForkTsCheckerWebpackPlugin` 则在独立进程中执行 TypeScript 类型检查，使两项工作可以并行进行。模块足够多且 loader 耗时明显时，再考虑使用 `thread-loader`，但它存在 worker 启动和通信成本，应结合耗时基线确认并行是否有收益。示例配置如下：
+
+```js fold title="webpack.config.js"
+const path = require('path')
+const ForkTsCheckerWebpackPlugin = require('fork-ts-checker-webpack-plugin')
+
+module.exports = {
+  module: {
+    rules: [
+      {
+        // 匹配 TS 和 TSX 文件
+        test: /\.tsx?$/,
+        // 只处理 src 目录
+        include: path.resolve(__dirname, 'src'),
+        use: [
+          {
+            // 利用 pitch 阶段先行，将右侧 loader 放到 worker 中执行
+            loader: 'thread-loader',
+            options: {
+              // worker 数量结合 CPU 核数和构建规模调整
+              workers: 2,
+            },
+          },
+          {
+            // 在 worker 中执行 SWC 转译；只转译，不做类型检查
+            loader: 'swc-loader',
+            options: {
+              // 解析 TS 和 TSX 语法并输出 JavaScript
+              jsc: {
+                parser: {
+                  syntax: 'typescript',
+                  tsx: true,
+                },
+              },
+            },
+          },
+        ],
+      },
+    ],
+  },
+  plugins: [
+    // 将 TypeScript 类型检查从转译流程中拆开
+    new ForkTsCheckerWebpackPlugin({
+      typescript: {
+        // 在独立进程中读取 tsconfig 执行类型检查
+        configFile: path.resolve(__dirname, 'tsconfig.json'),
+        // 同时检查语法错误和类型错误
+        diagnosticOptions: {
+          // 检查类型关系和语义错误
+          semantic: true,
+          // 检查语法错误
+          syntactic: true,
+        },
+      },
+    }),
+  ],
+}
+```
 
 ### 压缩与 source map
 
@@ -452,8 +523,8 @@ module.exports = {
           compress: { passes: 1 },
         },
       }),
-      // 压缩 CSS
-      new CssMinimizerPlugin(),
+        // 压缩 CSS
+        new CssMinimizerPlugin(),
     ],
   },
 }
@@ -470,26 +541,113 @@ source map 需要在构建速度、调试体验和源码暴露之间取舍：
 
 ### 持久化缓存
 
-Webpack 的 filesystem cache 用于复用未变化的模块和 loader 结果，减少重复构建。示例配置如下：
+Webpack 的 filesystem cache 会将模块和 loader 的处理结果持久化到磁盘，后续构建可以直接复用，避免重复处理。配置如下：
 
 ```js fold title="webpack.config.js"
 const path = require('path')
 
 module.exports = {
   cache: {
-    // 将缓存写入文件系统
+    // 将缓存持久化到文件系统
     type: 'filesystem',
-    // 使用固定缓存目录
+    // 指定缓存目录
     cacheDirectory: path.resolve(__dirname, '.webpack-cache'),
     buildDependencies: {
-      // 配置变化时使缓存失效
+      // 配置文件变化时使缓存失效
       config: [__filename],
     },
   },
 }
 ```
 
-临时 CI runner 通常不会保留本地缓存，需要通过 CI 的缓存机制保存 `.webpack-cache`；`node_modules` 的缓存则单独处理。
+如果 CI 使用临时环境，还需要通过 CI 的缓存机制保留 `.webpack-cache` 目录，让后续任务继续复用已有缓存。GitHub Actions 可以这样配置：
+
+```yaml fold title=".github/workflows/build.yml"
+name: Webpack build
+
+on:
+  push:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v4
+
+      - name: Cache Webpack
+        uses: actions/cache@v4
+        with:
+          # 缓存 Webpack filesystem cache
+          path: .webpack-cache
+          # 锁文件或配置变化时创建新缓存
+          key: ${{ runner.os }}-webpack-${{ hashFiles('**/pnpm-lock.yaml', '**/webpack.config.js') }}
+          # 精确 key 未命中时，按此前缀匹配旧缓存
+          restore-keys: |
+            ${{ runner.os }}-webpack-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm exec webpack
+```
+
+### DLL 预构建
+
+`DllPlugin` 可将变化较少的依赖提前单独构建，再由主构建通过 `DllReferencePlugin` 复用。它会增加额外的配置和维护成本，通常只在依赖规模较大、变化稳定且独立构建收益明确时考虑。DLL 构建配置如下：
+
+```js fold title="webpack.dll.config.js"
+const path = require('path')
+const webpack = require('webpack')
+
+module.exports = {
+  // 单独构建变化较少的依赖
+  entry: {
+    vendor: ['react', 'react-dom'],
+  },
+  output: {
+    // 输出 DLL 文件和 manifest
+    path: path.resolve(__dirname, 'dist/dll'),
+    filename: '[name].dll.js',
+    // 将 DLL 暴露为 vendor_<fullhash> 形式的库名
+    library: '[name]_[fullhash]',
+  },
+  plugins: [
+    new webpack.DllPlugin({
+      // 记录模块名与模块 id 的映射
+      path: path.resolve(__dirname, 'dist/dll/[name]-manifest.json'),
+      // 与 output.library 使用相同的库名
+      name: '[name]_[fullhash]',
+    }),
+  ],
+}
+```
+
+主构建读取 manifest，复用已经生成的 DLL：
+
+```js fold title="webpack.config.js"
+const path = require('path')
+const webpack = require('webpack')
+const HtmlWebpackPlugin = require('html-webpack-plugin')
+const AddAssetHtmlPlugin = require('add-asset-html-webpack-plugin')
+
+module.exports = {
+  plugins: [
+    new webpack.DllReferencePlugin({
+      // 引用 DLL 构建生成的 manifest
+      manifest: require('./dist/dll/vendor-manifest.json'),
+    }),
+    // 生成 index.html，作为主 bundle 和 DLL 的注入目标
+    new HtmlWebpackPlugin(),
+    new AddAssetHtmlPlugin({
+      // 将 DLL 文件注入 HTML，并置于主 bundle 前
+      filepath: path.resolve(__dirname, 'dist/dll/vendor.dll.js'),
+    }),
+  ],
+}
+```
 
 ## Module Federation
 
@@ -523,8 +681,14 @@ module.exports = {
       },
       shared: {
         // 避免 remote 和 host 各自加载一份 React
-        react: { singleton: true },
-        'react-dom': { singleton: true },
+        react: {
+          singleton: true,
+          requiredVersion: '^18.2.0',
+        },
+        'react-dom': {
+          singleton: true,
+          requiredVersion: '^18.2.0',
+        },
       },
     }),
   ],
@@ -533,17 +697,34 @@ module.exports = {
 
 host 配置示例：
 
-```js title="webpack.host.config.js"
-new ModuleFederationPlugin({
-  name: 'hostApp',
-  remotes: {
-    // 指向 remoteEntry，运行时据此查找远程模块
-    remoteApp: 'remoteApp@https://cdn.example.com/remoteEntry.js',
-  },
-})
+```js fold title="webpack.host.config.js"
+const { ModuleFederationPlugin } = require('webpack').container
+
+module.exports = {
+  plugins: [
+    new ModuleFederationPlugin({
+      name: 'hostApp',
+      remotes: {
+        // 指向 remoteEntry，运行时据此查找远程模块
+        remoteApp: 'remoteApp@https://cdn.example.com/remoteEntry.js',
+      },
+      shared: {
+        // 与 remote 共享 React 单例
+        react: {
+          singleton: true,
+          requiredVersion: '^18.2.0',
+        },
+        'react-dom': {
+          singleton: true,
+          requiredVersion: '^18.2.0',
+        },
+      },
+    }),
+  ],
+}
 ```
 
-这些配置建立了 remote 的暴露关系和 host 的消费关系。生产环境还需要处理 remoteEntry 加载、shared 版本协商、缓存更新和加载失败兜底。
+这些配置建立了 remote 的暴露关系和 host 的消费关系。生产环境还需要处理 remoteEntry 加载、缓存更新和加载失败兜底。
 
 ## 核心概念
 
@@ -552,11 +733,17 @@ new ModuleFederationPlugin({
 | 概念                | 作用                                              |
 | ------------------- | ------------------------------------------------- |
 | `entry`             | 构建入口，Webpack 从这里开始收集依赖              |
+| `output`             | 控制输出目录、文件名和资源命名规则                |
+| `mode`               | 选择开发或生产模式，并启用对应默认配置            |
+| `resolver`           | 将模块请求解析为具体文件路径                      |
 | `module`            | 模块图里的单个节点，可以是 JS、CSS、图片等资源    |
 | `loader`            | 把匹配到的文件转换成 Webpack 能处理的模块         |
+| `parser`             | 分析模块内容并提取依赖                            |
 | `plugin`            | 介入构建生命周期，扩展全局构建能力                |
 | `compiler`          | 一次 Webpack 运行的总控制器                       |
 | `compilation`       | 一次具体编译过程，包含模块、chunk、asset 等信息   |
+| `module graph`       | 记录模块之间的依赖关系                            |
+| `chunk graph`        | 记录模块与 chunk 的归属及 chunk 之间的关系        |
 | `chunk`             | 按入口、动态导入和分包规则形成的模块分组          |
 | `bundle`            | 由 chunk 生成的 JavaScript 输出文件，也是一种 asset |
 | `asset`             | 最终输出资源，可以是 JS、CSS、图片、字体、HTML 等 |

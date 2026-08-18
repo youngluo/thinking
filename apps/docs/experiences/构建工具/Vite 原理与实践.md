@@ -121,38 +121,39 @@ Vite 会结合浏览器缓存和 dev server 的转换缓存，避免重复处理
 为了管理转换结果和模块之间的导入关系，Vite 会维护模块图。下面的图展示了模块图如何定位节点，以及每个节点保存的主要信息：
 
 ```d2 maxHeight=400
-graph: EnvironmentModuleGraph {
-  class: group
-  grid-columns: 3
+title: |md
+  # EnvironmentModuleGraph
+| {near: top-center}
 
-  indexes: 索引入口 {
-    class: subgroup
-    grid-columns: 1
+grid-columns: 3
 
-    url: 请求 URL
-    id: 解析后 id
-    file: 文件路径
-    etag: ETag
-  }
+indexes: 索引入口 {
+  class: subgroup
+  grid-columns: 1
 
-  spacer: " "
-  spacer.width: 170
-  spacer.style.opacity: 0
-
-  node: EnvironmentModuleNode {
-    class: subgroup
-    grid-columns: 1
-
-    identity: 模块身份
-    cache: 转换缓存
-    invalidation: 失效状态
-    importers: importers
-    importedModules: importedModules
-    hmr: HMR 边界信息
-  }
-
-  indexes -> node: 找到模块节点
+  url: 请求 URL
+  id: 解析后 id
+  file: 文件路径
+  etag: ETag
 }
+
+spacer: " "
+spacer.width: 170
+spacer.style.opacity: 0
+
+node: EnvironmentModuleNode {
+  class: subgroup
+  grid-columns: 1
+
+  identity: 模块身份
+  cache: 转换缓存
+  invalidation: 失效状态
+  importers: importers
+  importedModules: importedModules
+  hmr: HMR 边界信息
+}
+
+indexes -> node: 找到模块节点
 ```
 
 图中的主要数据结构及字段职责如下：
@@ -333,16 +334,16 @@ export default function myAlias(): Plugin {
 
 ### 常用插件
 
-| 分类     | 插件                           | 用途                                                            |
-| -------- | ------------------------------ | --------------------------------------------------------------- |
-| 框架集成 | `@vitejs/plugin-vue`           | 提供 Vue 3 单文件组件支持                                       |
-| 框架集成 | `@vitejs/plugin-react`         | 提供 React Fast Refresh 支持                                    |
-| 框架集成 | `@sveltejs/vite-plugin-svelte` | 提供 Svelte 编译与 HMR 支持                                     |
-| 开发辅助 | `unplugin-icons`               | 按需导入图标                                                    |
-| 开发辅助 | `unplugin-auto-import`         | 自动导入常用 API                                                |
-| 开发辅助 | `unplugin-vue-components`      | 自动导入并注册 Vue 组件                                         |
-| 调试分析 | `vite-plugin-inspect`          | 查看插件转换过程                                                |
-| 调试分析 | `rollup-plugin-visualizer`     | 分析构建产物组成                                                |
+| 分类     | 插件                           | 用途                                                                           |
+| -------- | ------------------------------ | ------------------------------------------------------------------------------ |
+| 框架集成 | `@vitejs/plugin-vue`           | 提供 Vue 3 单文件组件支持                                                      |
+| 框架集成 | `@vitejs/plugin-react`         | 提供 React Fast Refresh 支持                                                   |
+| 框架集成 | `@sveltejs/vite-plugin-svelte` | 提供 Svelte 编译与 HMR 支持                                                    |
+| 开发辅助 | `unplugin-icons`               | 按需导入图标                                                                   |
+| 开发辅助 | `unplugin-auto-import`         | 自动导入常用 API                                                               |
+| 开发辅助 | `unplugin-vue-components`      | 自动导入并注册 Vue 组件                                                        |
+| 调试分析 | `vite-plugin-inspect`          | 查看插件转换过程                                                               |
+| 调试分析 | `rollup-plugin-visualizer`     | 分析构建产物组成                                                               |
 | 调试分析 | `@vitejs/devtools`             | 通过 `devtools: true` 查看 Vite 内部状态和构建分析，目前仅支持 build（实验性） |
 
 ### Module Federation
@@ -439,16 +440,16 @@ export function App() {
 }
 ```
 
-## dev 与 build 差异
+## 开发与生产的差异
 
-dev 和 build 共用配置与插件体系，但处理范围和输出目标不同：dev 按浏览器请求转换模块，build 则从入口出发分析完整依赖图并生成部署产物。差异主要体现在以下方面：
+开发阶段和生产阶段共享配置与插件体系，但处理方式和输出目标不同。开发阶段由 dev server 根据浏览器请求按需转换模块，生产阶段则由 build 从入口出发分析完整依赖图并生成部署产物。主要差异如下：
 
-- **处理范围**：未访问的路由或模块可能不会在 dev 中被转换，build 会处理所有可达模块，因此可能暴露模块解析、语法或变量动态导入问题。变量动态导入需使用相对路径和明确扩展名，变量只能表示一层文件名；更复杂的场景可使用 `import.meta.glob`；
+- **处理范围**：开发过程中未访问的路由或模块可能尚未转换，构建时则会处理所有可达模块，因此一些模块解析、语法或动态导入问题可能只在构建时暴露。变量动态导入需使用相对路径和明确扩展名，变量只能表示一层目录中的文件名；更复杂的场景可使用 `import.meta.glob`；
 
-- **转换目标**：dev 面向现代浏览器，尽量保留源码语法；build 则根据 `build.target` 转换语法，并执行 Tree Shaking、代码分块和压缩；
+- **转换目标**：开发服务器主要转换 TypeScript、JSX 等源码，不按 `build.target` 降级 JavaScript 语法；生产构建则根据 `build.target` 转换语法，并执行 Tree Shaking、代码分块和压缩；
 
-- **依赖处理**：依赖预构建只用于 dev，build 会重新分析并打包依赖。非标准的 CJS/ESM 导出可能暴露导入错误，错误的 `sideEffects` 声明也可能导致必要代码被移除；
+- **依赖处理**：依赖预构建只用于开发阶段，生产构建会重新分析并处理依赖。非标准的 CJS/ESM 导出可能暴露导入错误，错误的 `sideEffects` 声明也可能导致必要代码被移除；
 
-- **资源路径**：dev server 直接提供本地资源，build 产物中的 JS、CSS 和图片 URL 则根据 `base` 生成。部署到 CDN 或子路径时，需要按实际路径配置并验证产物。
+- **资源路径**：开发服务器直接提供本地资源，生产构建则根据 `base` 调整产物中的 JS、CSS 和图片 URL。部署到 CDN 或子路径时，应按实际路径配置并验证产物。
 
-因此，提交或部署前应运行 `vite build`，再通过 `vite preview` 或真实环境检查产物。Vite 只转译 TypeScript，不执行类型检查，TypeScript 项目还需要运行 `tsc --noEmit` 或相应的检查工具。
+因此，提交或部署前应运行 `vite build`，并通过 `vite preview` 或真实环境验证产物。Vite 只转译 TypeScript，不负责类型检查；TypeScript 项目还应运行 `tsc --noEmit` 或相应的类型检查工具。
