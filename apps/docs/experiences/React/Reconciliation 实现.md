@@ -3,7 +3,16 @@ createdAt: '2026-06-04 12:00'
 order: 4
 ---
 
-# React Reconcile 实现
+# React Reconciliation 实现
+
+React 的 Diff 是一种启发式算法，不会尝试求解两棵树之间的最小编辑距离，因为通用树 Diff 若要寻找全局最优的变更，计算复杂度会随节点数量快速增长。React 则基于两个假设缩小比较范围，以较低成本完成更新：
+
+- 不同类型的元素会生成不同的树。类型发生变化时，直接删除旧节点及其子树，创建新的 Fiber 子树；
+- 开发者可以使用稳定的 `key` 标识同级列表中可复用的节点。React 先通过 `key` 查找候选旧节点，再结合 `type` 判断是否复用。
+
+因此，Diff 只比较同一层级的节点，不跨层级寻找可复用节点。对单节点，React 直接比较 `key` 和 `type`；对多节点，先按顺序匹配，遇到不匹配后再借助 `key` 建立的 `Map` 查找旧节点，并通过 `lastPlacedIndex` 判断节点是否需要移动。这样可以用接近线性的遍历完成一次列表更新，同时保留复用节点、减少 DOM 操作的能力。
+
+## 协调入口
 
 协调阶段负责比较 `current Fiber` 和本轮渲染得到的 `nextChildren`，生成 `workInProgress Fiber`。入口在渲染阶段的 [beginWork](https://github.com/facebook/react/blob/main/packages/react-reconciler/src/ReactFiberBeginWork.js#L341)。
 
@@ -106,7 +115,7 @@ function reconcileChildFibersImpl(
 }
 ```
 
-## 单节点 diff
+## 单节点 Diff
 
 单节点 diff 在 [reconcileSingleElement](https://github.com/facebook/react/blob/main/packages/react-reconciler/src/ReactChildFiber.js#L1698) 中完成，`reconcileSinglePortal` 逻辑类似：
 
@@ -158,7 +167,7 @@ function reconcileSingleElement(
 }
 ```
 
-## 多节点 diff
+## 多节点 Diff
 
 多节点 diff 在 [reconcileChildrenArray](https://github.com/facebook/react/blob/main/packages/react-reconciler/src/ReactChildFiber.js#L1175) 中完成：
 
@@ -285,7 +294,7 @@ function reconcileChildrenArray(
 }
 ```
 
-### 标记节点移动
+### Placement 标记
 
 多节点 diff 使用 [placeChild](https://github.com/facebook/react/blob/main/packages/react-reconciler/src/ReactChildFiber.js#L511) 判断节点是否需要移动，并更新 `lastPlacedIndex`。
 
@@ -317,7 +326,7 @@ function placeChild(
 }
 ```
 
-### 示例演示
+### 列表重排示例
 
 看一个列表重排的例子：
 
@@ -341,25 +350,18 @@ function placeChild(
    - React 检测到 B 有 `Placement` 标记
    - 调用 `commitPlacement`，将 B 移到 D 之前
 
-### Placement 如何移动 DOM
+### Commit 阶段如何处理 Placement
 
-`Placement` 只表示 Fiber 对应的 DOM 需要插入或移动，并不记录目标位置。目标顺序由新的 Fiber 链表决定；旧列表只用于判断能否复用，以及是否需要打标记。`reconcileChildrenArray` 每处理一个新节点，就通过 `previousNewFiber.sibling = newFiber` 把它串到新链表里。
+`Placement` 只表示 Fiber 对应的 DOM 需要插入或移动，并不记录目标位置。目标位置由新 Fiber 链表中的 sibling 关系决定，旧列表只用于判断节点能否复用以及是否需要标记。
 
-以 `[A, C, B, D]` 为例：
+以 `[A, C, B, D]` 为例，`reconcileChildrenArray` 生成的新 Fiber 链表是 `A → C → B → D`。A、C、D 复用且没有 `Placement`，B 复用但标记 `Placement`。该标记只附加在 B 上，不影响 sibling 链接顺序。
 
-- A：复用（oldIndex=0），无 flags，`resultingFirstChild = A`
-- C：复用（oldIndex=2），无 flags，`A.sibling = C`
-- B：复用（oldIndex=1），标 `Placement`，`C.sibling = B`
-- D：复用（oldIndex=3），无 flags，`B.sibling = D`
-
-最终 Fiber 链表是 `A → C → B → D`。`Placement` 只附加在 B 上，不影响 sibling 链接顺序。
-
-commit 阶段根据新 Fiber tree 的 sibling 关系找锚点。最简单的情况是所有节点都是 host 节点，本身持有 `stateNode`，可以直接定位 DOM。
+Commit 阶段根据新 Fiber tree 的 sibling 关系查找锚点。最简单的情况是所有节点都是 host 节点，本身持有 `stateNode`，可以直接定位 DOM。
 
 整体流程可以概括为：
 
 ```d2
-direction: down
+direction: right
 
 placement: Placement 标记节点
 commit: commitPlacement
@@ -464,7 +466,7 @@ function getHostSibling(fiber: Fiber): Instance | null {
 
 React 没有为每个 Fiber 维护“在父节点中的动态 index”，而是依赖新 Fiber tree 中的下一个可用 host sibling 来定位。
 
-#### 非 host 节点场景
+### 非 Host 节点场景
 
 列表项通常会被组件包一层：
 
@@ -508,11 +510,3 @@ function insertOrAppendPlacementNode(node, before, parent, parentFragmentInstanc
 2. `insertOrAppendPlacementNode(B, before=<li>, parent=<ul>)`：B 不是 host → 沿 B.child 找到 `<li>`，执行 `ul.insertBefore(<li>, before)`。
 
 最终 DOM 顺序仍是 `A → C → B → D`。组件层级越深，递归路径越长，但这通常不是列表重排的主要瓶颈；真正需要警惕的是 key 错位、子节点结构变化等不稳定因素，它们会触发更多 `Placement`，也更需要稳定的 key 和 `React.memo` 来收敛更新范围。
-
-### 为什么节点移动总是向右的
-
-这里说的“向右移动”，指的是 React 在 diff 阶段选择移动的总是旧位置更靠前、但新顺序排在后面的节点。
-
-React 从左到右遍历新 children，用 `lastPlacedIndex` 记录已确认节点中的最大旧位置。后续节点的 `oldIndex` 如果小于它，说明这个节点在旧列表中位于某个已处理节点之前，但在新列表中排到了它之后，因此需要标记 `Placement`。否则，相对顺序仍然成立，不需要移动。
-
-例如 `[A, B, C, D]` 变成 `[A, C, B, D]`，React 不会记录 C 左移，而是把 B 标记为 `Placement`，再在 commit 阶段把 B 插到 D 前面。这样 diff 只需要找出需要后移的节点，真实 DOM 重排交给 `insertBefore` 或 `appendChild` 完成。

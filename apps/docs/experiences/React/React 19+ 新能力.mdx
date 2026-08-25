@@ -1,0 +1,613 @@
+---
+createdAt: '2026-08-25 14:36'
+order: 6
+draft: true
+---
+
+import { Tab, Tabs } from '@rspress/core/theme'
+
+# React 19+ 新能力与性能边界
+
+React 19 将异步提交、Promise 读取、`ref` 传递和资源加载等常见场景纳入 React API。React 19.2 又增加了 `<Activity />`、`useEffectEvent`、`cacheSignal` 和 React Performance Tracks。
+
+这些能力解决的问题不在同一层：Actions 管理提交状态，`useOptimistic` 提供即时反馈，`Activity` 管理隐藏内容，`cacheSignal` 结束不再需要的服务端工作，Performance Tracks 则用于定位性能问题。本文按能力所属的问题组织内容，并说明它们的用法和边界。
+
+## 变化范围与使用方式
+
+本文只讨论 React 19 和 React 19.2 已经提供的能力，不展开通用的列表优化、状态拆分或 memoization 技巧。这些能力主要对应四类问题：
+
+- **交互响应**：用户操作后，界面能否及时反馈；
+- **Render 成本**：一次更新需要重新计算多少组件和数据；
+- **异步等待**：请求或提交过程中，界面是否保持可操作；
+- **无效工作**：已经不再需要的请求、订阅或隐藏内容是否仍在继续执行。
+
+使用这些能力时，`react` 和 `react-dom` 应保持同一版本；只有涉及 DOM 的 API 才需要 `react-dom`。框架可能会进一步封装其中的能力，但 React API 本身不会替应用决定数据缓存、错误恢复或性能优化策略。
+
+## Actions 与表单
+
+React 19 将异步数据变更抽象为 Actions。Action 通常负责执行一次提交或其它副作用，React 可以在 Transition 中追踪它的 pending 状态，并把结果交给状态或表单 UI。
+
+Actions 改善的是提交流程和用户反馈，不会缩短接口耗时，也不会自动减少服务端计算。
+
+### useActionState
+
+`useActionState` 将 Action 返回的新状态和 pending 状态绑定到组件，适合处理表单提交后的结果和错误信息。
+
+```tsx fold
+import { useActionState } from 'react'
+
+type FormState = {
+  error: string | null
+}
+
+async function saveProfile(formData: FormData) {
+  const response = await fetch('/api/profile', {
+    method: 'POST',
+    body: formData,
+  })
+
+  if (!response.ok) {
+    throw new Error('保存失败')
+  }
+}
+
+export function ProfileForm() {
+  const [state, formAction, isPending] = useActionState(
+    async (_previousState: FormState, formData: FormData) => {
+      try {
+        await saveProfile(formData)
+        return { error: null }
+      } catch {
+        return { error: '保存失败，请稍后重试' }
+      }
+    },
+    { error: null },
+  )
+
+  return (
+    <form action={formAction}>
+      <input name="displayName" />
+      <button type="submit" disabled={isPending}>
+        {isPending ? '保存中' : '保存'}
+      </button>
+      {state.error && <p role="alert">{state.error}</p>}
+    </form>
+  )
+}
+```
+
+`useActionState` 返回 Action 最新产生的状态、触发 Action 的函数和 `isPending`。相比手动维护 `isSubmitting`、错误状态和结果状态，它减少了状态同步代码，也让提交状态和 Action 的生命周期保持一致。同一个 Hook 的多次触发会按顺序执行，后一次 Action 会接收前一次返回的状态。
+
+这里的性能收益主要体现在交互流程更连贯。请求仍然需要正常完成，表单校验、接口耗时和服务端性能也不会因为使用这个 Hook 自动改善。
+
+### useFormStatus
+
+`useFormStatus` 用于读取最近父级 `<form>` 的提交状态。它必须在表单的子组件中调用，不能在定义 `<form>` 的同一个组件中直接读取当前表单状态。
+
+```tsx fold
+import { useFormStatus } from 'react-dom'
+
+export function SubmitButton() {
+  const { pending } = useFormStatus()
+
+  return (
+    <button type="submit" disabled={pending}>
+      {pending ? '提交中' : '提交'}
+    </button>
+  )
+}
+```
+
+它适合放在设计系统的按钮、进度提示或错误提示组件中，避免业务组件逐层传递 pending 状态。它解决的是表单状态的读取问题，不会改变表单提交本身的调度优先级。
+
+### form action 与 formAction
+
+React 19 允许把函数直接传给 `<form>` 的 `action`，也允许把函数传给提交按钮或输入控件的 `formAction`。React 会将这些函数作为 Action 处理，并在 Action 完成后重置非受控表单字段。
+
+```tsx fold
+async function createComment(formData: FormData) {
+  await fetch('/api/comments', {
+    method: 'POST',
+    body: formData,
+  })
+}
+
+function CommentForm() {
+  return (
+    <form action={createComment}>
+      <textarea name="content" />
+      <button type="submit">发布</button>
+      <button type="submit" formAction={saveDraft}>保存草稿</button>
+    </form>
+  )
+}
+
+async function saveDraft(formData: FormData) {
+  await fetch('/api/comments/draft', {
+    method: 'POST',
+    body: formData,
+  })
+}
+```
+
+`action` 和 `formAction` 适合表达「提交数据并更新界面」的完整流程。它们不等同于 Server Action，是否在服务端执行取决于使用的框架和运行环境；在普通客户端应用中，传入的函数仍然是在浏览器中执行。
+
+## 异步交互与优先级
+
+### useOptimistic
+
+`useOptimistic` 用于在真实状态更新前展示临时结果。当外层 Action 完成且基础状态没有更新时，临时状态会回到基础状态；请求成功后，仍然需要用服务端返回值更新真实状态。
+
+点赞是一个更直观的例子。用户点击后先看到按钮状态和数量变化，请求失败时回滚，请求成功后再用服务端返回的结果更新真实状态。示例只保留状态变化和提交关系，`updateLike` 和 `onPostUpdated` 的具体实现省略：
+
+```tsx fold
+import { useOptimistic, useTransition } from 'react'
+
+type Post = {
+  id: string
+  liked: boolean
+  likeCount: number
+}
+
+export function LikeButton({
+  post,
+  onPostUpdated,
+}: {
+  post: Post
+  onPostUpdated: (post: Post) => void
+}) {
+  const [isPending, startTransition] = useTransition()
+  const [optimisticPost, setOptimisticPost] = useOptimistic(
+    post,
+    (currentPost, nextLiked: boolean) => ({
+      ...currentPost,
+      liked: nextLiked,
+      likeCount:
+        currentPost.likeCount +
+        (nextLiked === currentPost.liked ? 0 : nextLiked ? 1 : -1),
+    }),
+  )
+
+  function handleClick() {
+    const nextLiked = !optimisticPost.liked
+
+    startTransition(async () => {
+      setOptimisticPost(nextLiked)
+      const savedPost = await updateLike(post.id, nextLiked)
+      onPostUpdated(savedPost)
+    })
+  }
+
+  return (
+    <button
+      type="button"
+      aria-pressed={optimisticPost.liked}
+      disabled={isPending}
+      onClick={handleClick}
+    >
+      {optimisticPost.liked ? '已点赞' : '点赞'} {optimisticPost.likeCount}
+    </button>
+  )
+}
+```
+
+乐观更新降低的是用户感知的等待时间，不是请求或 Render 的实际成本。异步 Action 结束后，React 会重新以传入的真实状态为基础；如果请求失败，临时状态会回滚，如果请求成功，则要用服务端返回的 `post` 更新真实状态。使用时还要注意三个边界：
+
+- 临时数据必须有稳定且不会与服务端冲突的标识；
+- 失败后要能回到服务端确认的真实状态；
+- 不适合展示不可逆的副作用，例如扣款成功或权限已经生效。
+
+### useTransition
+
+`useTransition` 不是 React 19 才出现的 API。React 19 的 Actions 会利用异步 Transition 管理 pending 和完成状态，但 `useTransition` 本身也适用于一般的非紧急更新。它把这类更新放到较低优先级，并通过 `isPending` 暴露处理状态，不会减少本次更新需要执行的工作，只是让高优先级交互有机会先得到响应。
+
+```tsx fold
+import { useState, useTransition } from 'react'
+
+export function Navigation({ onNavigate }: { onNavigate: (tab: string) => void }) {
+  const [isPending, startTransition] = useTransition()
+  const [activeTab, setActiveTab] = useState('home')
+
+  function handleNavigate(nextTab: string) {
+    setActiveTab(nextTab)
+    startTransition(() => {
+      onNavigate(nextTab)
+    })
+  }
+
+  return (
+    <nav>
+      <button onClick={() => handleNavigate('home')}>首页</button>
+      <button onClick={() => handleNavigate('settings')}>设置</button>
+      {isPending && <span>加载中...</span>}
+      <span>当前页面：{activeTab}</span>
+    </nav>
+  )
+}
+```
+
+它适合切换标签页、筛选结果或导航内容等非紧急更新。输入框的受控值、点击反馈等直接影响当前操作的更新，不应全部放进 Transition；如果更新本身包含同步的昂贵计算，还需要结合拆分组件、缓存或其它手段处理。
+
+## React 19 基础能力
+
+### use
+
+`use` 让组件可以在 Render 中读取 Promise 或 Context。读取 Promise 时，pending 会交给 `Suspense` 展示加载 UI，reject 则会抛给最近的 Error Boundary。
+
+错误边界通常用 class 组件实现，核心是记录错误状态，并在 `getDerivedStateFromError` 中切换到降级 UI：
+
+```tsx fold title="ErrorBoundary.tsx"
+import { Component, type ErrorInfo, type ReactNode } from 'react'
+
+type ErrorBoundaryProps = {
+  children: ReactNode
+  fallback: ReactNode
+}
+
+type ErrorBoundaryState = {
+  hasError: boolean
+}
+
+export class ErrorBoundary extends Component<
+  ErrorBoundaryProps,
+  ErrorBoundaryState
+> {
+  state: ErrorBoundaryState = {
+    hasError: false,
+  }
+
+  static getDerivedStateFromError(): ErrorBoundaryState {
+    return { hasError: true }
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error('组件渲染失败', error, info.componentStack)
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return this.props.fallback
+    }
+
+    return this.props.children
+  }
+}
+```
+
+把错误边界放在外层，`Suspense` 放在内层，就能分别处理 Promise 的错误和等待状态：
+
+```tsx fold title="UserPanel.tsx"
+import { Suspense, use } from 'react'
+import { ErrorBoundary } from './ErrorBoundary'
+
+function UserName({ userPromise }: { userPromise: Promise<{ name: string }> }) {
+  const user = use(userPromise)
+  return <span>{user.name}</span>
+}
+
+type UserPanelProps = {
+  userPromise: Promise<{ name: string }>
+}
+
+export function UserPanel({ userPromise }: UserPanelProps) {
+  return (
+    <ErrorBoundary fallback={<span>用户信息加载失败</span>}>
+      <Suspense fallback={<span>加载中...</span>}>
+        <UserName userPromise={userPromise} />
+      </Suspense>
+    </ErrorBoundary>
+  )
+}
+```
+
+这里的 `ErrorBoundary` 可以替换成项目自己的错误边界组件，或由错误边界库提供。`Suspense` 只负责等待中的 UI，不能捕获 Promise 的 reject；`use` 也不能放进 `try...catch`。
+
+重试时不能继续使用同一个已经 reject 的 Promise，需要清理缓存或重新获取一个新的 Promise，并重置或重新挂载 Error Boundary。Promise 应该由组件外部、缓存层或框架的数据加载层创建，不能在 Client Component 的 Render 中临时创建，否则每次 Render 都可能得到一个新的 Promise。
+
+`use` 本身不会让请求变快。它的价值在于把异步依赖和 Suspense 的加载边界连接起来，让界面可以按内容逐步显示。与其它 Hook 不同，`use` 可以放在条件分支中调用，但仍然只能在 Render 中使用。
+
+### ref 作为普通 prop
+
+React 19 中，函数组件可以直接读取 `ref` prop，不再必须通过 `forwardRef` 转发。
+
+```tsx fold
+import type { ComponentProps } from 'react'
+
+type InputProps = ComponentProps<'input'>
+
+export function Input({ ref, ...props }: InputProps) {
+  return <input ref={ref} {...props} />
+}
+```
+
+这项变化主要简化组件封装，对 Render 性能没有直接影响。支持 React 18 的组件库仍需要保留 `forwardRef` 等兼容写法，不能只根据当前应用已经升级到 React 19 就删除兼容代码。
+
+### Context 直接作为 Provider
+
+Context 对象可以直接作为 Provider 使用：
+
+```tsx fold
+<ThemeContext value="dark">
+  <App />
+</ThemeContext>
+```
+
+它只是 Provider 写法的简化，不会自动改变 Context 的更新粒度。Context value 发生变化时，仍然需要根据组件树和消费关系评估更新范围。
+
+### cache
+
+`cache` 只用于 React Server Components。它返回一个带缓存能力的函数，在同一次服务端 Render 中用相同函数和相同参数调用时，后续调用会复用第一次得到的结果或同一个进行中的 Promise，因此适合请求去重和共享计算结果。它不是跨请求的持久缓存，React 会在每次服务端请求之间清理这份缓存。
+
+缓存函数应该定义在模块作用域，让不同组件共享同一个缓存函数实例。不要在组件 Render 中临时创建 `cache(fn)`，否则每次 Render 都可能得到新的缓存函数，无法获得预期的复用效果：
+
+```tsx fold title="user.ts"
+import { cache } from 'react'
+
+export const getUser = cache(async (id: string) => {
+  const response = await fetch(`/api/users/${id}`)
+  return response.json() as Promise<{ name: string }>
+})
+```
+
+`cache` 解决的是同一次服务端 Render 中的重复读取，不等同于跨请求的数据缓存。需要长期缓存时，仍然要使用框架或服务端提供的缓存机制。
+
+### 文档元数据与资源加载
+
+组件可以直接返回 `<title>`、`<meta>` 和 `<link>`，React 会将它们放到文档的对应位置。React DOM 还提供 `preload`、`preinit` 等资源提示 API，用于更早地告诉浏览器即将需要的资源。
+
+```tsx fold
+import { preload } from 'react-dom'
+
+preload('/fonts/app.woff2', {
+  as: 'font',
+  crossOrigin: 'anonymous',
+})
+
+export function ArticlePage() {
+  return (
+    <>
+      <title>文章详情</title>
+      <meta name="description" content="文章详情页" />
+      <link rel="stylesheet" href="/article.css" precedence="default" />
+      <article>文章内容</article>
+    </>
+  )
+}
+```
+
+元数据能力主要简化组件与文档头部的协作，对 Render 性能没有直接影响。资源提示可能改善首屏资源的发现时间，但过度 preload 会抢占关键资源的带宽。它们应该基于真实的加载链路和性能数据使用，而不是把所有资源都提前加载。
+
+## React 19.2 新能力
+
+### Activity
+
+`<Activity />` 用于管理一段 UI 的显示、隐藏和恢复。`mode="hidden"` 时，React 会保留子树的 state 和 DOM，将 DOM 设置为 `display: none`，执行其中 Effects 的清理函数；子树仍可能响应新的 props，但优先级低于可见内容。
+
+示例用两个标签页说明 `visible` 和 `hidden` 的切换，页面内部实现与 `Activity` 无关：
+
+```tsx fold
+import { Activity } from 'react'
+
+export function App({ activeTab }: { activeTab: 'home' | 'settings' }) {
+  return (
+    <>
+      <Activity mode={activeTab === 'home' ? 'visible' : 'hidden'}>
+        <HomePage />
+      </Activity>
+      <Activity mode={activeTab === 'settings' ? 'visible' : 'hidden'}>
+        <SettingsPage />
+      </Activity>
+    </>
+  )
+}
+```
+
+「离屏渲染」「keep-alive」和 `Activity` 处于不同层次，可以这样区分：
+
+| 层次 | 概念 | 解决的问题 | `Activity` 中的体现 |
+| --- | --- | --- | --- |
+| 渲染策略 | 离屏渲染 | 内容暂时不可见时，是否继续渲染或提前准备 | hidden 子树仍可能在后台以较低优先级更新 |
+| UI 模式 | keep-alive | 内容隐藏后，是否保留组件实例或页面状态 | 保留 state 和 DOM，但隐藏时执行 Effects 的清理函数 |
+| React API | `Activity` | 用统一的 React 语义管理隐藏、恢复和后台工作 | 同时定义可见性、更新优先级和 Effects 生命周期 |
+
+因此，`Activity` 可以理解为「带后台工作能力的状态保留边界」。它适合用户很可能马上进入的页面或需要保留输入状态的标签页，不适合把所有路由都放进去。隐藏内容仍可能占用内存，后台工作也会消耗 CPU 和网络资源；DOM 本身产生的副作用，例如 `<video>` 播放，不会因为 Effects 被清理而自动停止。
+
+### useEffectEvent
+
+`useEffectEvent` 用于把 Effect 中不需要触发重新连接的事件逻辑分离出来。这样可以读取最新值，同时避免因为这些值变化而重复建立外部连接。
+
+示例省略连接对象和通知函数的实现，重点观察 `theme` 变化时是否需要重新建立连接：
+
+```tsx fold
+import { useEffect, useEffectEvent } from 'react'
+
+type ChatRoomProps = {
+  roomId: string
+  theme: string
+}
+
+export function ChatRoom({ roomId, theme }: ChatRoomProps) {
+  const onConnected = useEffectEvent(() => {
+    showNotification('已连接', theme)
+  })
+
+  useEffect(() => {
+    const connection = createConnection(roomId)
+    connection.on('connected', onConnected)
+    connection.connect()
+
+    return () => connection.disconnect()
+  }, [roomId])
+
+  return <div>当前房间：{roomId}</div>
+}
+```
+
+这里的收益是减少不必要的连接重建和清理，不是让所有 Effect 都变快。Effect Event 只能从 Effect 内部触发，不能用来绕过真正具有响应性的依赖，也不能替代完整的依赖声明。
+
+### cacheSignal
+
+`cacheSignal` 用于感知当前 `cache` 生命周期何时结束。它返回一个由 React 管理的 `AbortSignal`。当本次 RSC Render 成功结束、被中止或失败时，React 会调用这个 signal 的 `abort()`，让仍在进行且已经不再需要的工作有机会退出。
+
+```tsx fold
+import { cache, cacheSignal } from 'react'
+
+const getUser = cache(async (id: string) => {
+  const signal = cacheSignal()
+  const response = await fetch(`/api/users/${id}`, {
+    signal,
+  })
+
+  return response.json() as Promise<{ name: string }>
+})
+
+export async function User({ id }: { id: string }) {
+  const user = await getUser(id)
+  return <span>{user.name}</span>
+}
+```
+
+在这个示例中，`cache` 让同一次服务端 Render 中相同 `id` 的读取共享一次请求，`cacheSignal` 则把请求绑定到当前 Render 的生命周期。取消链路是：Render 期间获取 `signal`，React 结束或中止本次 Render 后触发 `abort()`，`fetch` 监听到 signal 后终止仍在进行的请求。这样可以减少已经不再需要的网络和数据库工作。
+
+如果请求抛错，可以通过 `signal?.aborted` 区分 React 触发的取消和真实的请求失败，避免把正常取消记录成错误。`cacheSignal` 当前只用于 React Server Components，不能把它当作浏览器端请求的通用取消机制；在 Render 之外调用时会得到 `null`。
+
+### React Performance Tracks
+
+React 19.2 会在 Chrome Performance 面板中提供 React 专用的性能轨道，包括：
+
+- **Scheduler**：观察不同优先级的任务、调度顺序和等待情况；
+- **Components**：观察组件 Render、挂载和 Effects 的耗时；
+- **Server**：在支持的服务端场景中观察服务端 Render 工作。
+
+使用时先在开发版或 profiling 构建中录制一次真实交互，再把 React 轨道与网络请求、长任务和浏览器绘制放在同一时间线上对照。Performance Tracks 只负责提供证据，不会自动优化应用；开发环境中的耗时也不能直接等同于生产环境表现。
+
+## React Compiler
+
+React Compiler 是独立的构建时工具，不是 React 19 的运行时 API。它会分析组件和 Hooks，在编译产物中生成缓存与跳过重算逻辑，减少不必要的组件重新计算和昂贵的渲染计算。代码不符合 Rules of React 或超出编译器支持范围时，Compiler 可能跳过优化，实际收益仍需要通过性能工具验证。
+
+### 自动缓存与跳过重算
+
+它不会把源码直接改写成 `useMemo`、`useCallback` 或 `memo` 调用。上述 API 是手动控制 memoization 的方式，Compiler 则根据组件和 Hooks 的依赖关系自动决定哪些结果可以复用，哪些子树可以跳过重新计算。源码仍然可以保持普通的组件和函数写法。
+
+示例用一个列表组件展示三类 Compiler 可以处理的场景。源码只保留普通的组件、计算和回调，不直接调用 `useMemo`、`useCallback` 或 `memo`；第二个 Tab 再展示它们可能对应的缓存逻辑。`_c` 是 Compiler 使用的内部缓存函数，不是业务代码可以直接调用的公开 API。以下代码只展示缓存槽位和依赖检查的结构，实际产物会随编译器版本和配置变化：
+
+<Tabs>
+<Tab label='源码'>
+
+```tsx fold title="ProductList.tsx"
+import { ProductGridView } from './ProductGridView'
+
+function ProductGrid({ products, onSelect }) {
+  return <ProductGridView products={products} onSelect={onSelect} />
+}
+
+export function ProductList({ products, onSelect }) {
+  const visibleProducts = products.filter((product) => product.visible)
+  const handleSelect = (product) => onSelect(product.id)
+
+  return (
+    <ProductGrid
+      products={visibleProducts}
+      onSelect={handleSelect}
+    />
+  )
+}
+```
+
+</Tab>
+<Tab label='编译后（近似产物）'>
+
+```tsx fold title="编译产物（示意）"
+import { c as _c } from 'react/compiler-runtime'
+import { ProductGridView } from './ProductGridView'
+
+function ProductGrid({ products, onSelect }) {
+  const $ = _c(3)
+  let t0
+
+  // 组件内部的 JSX 也可能被缓存
+  if ($[0] !== products || $[1] !== onSelect) {
+    t0 = <ProductGridView products={products} onSelect={onSelect} />
+    $[0] = products
+    $[1] = onSelect
+    $[2] = t0
+  } else {
+    t0 = $[2]
+  }
+
+  return t0
+}
+
+function ProductList({ products, onSelect }) {
+  const $ = _c(7)
+  let t0
+
+  // useMemo 等价：products 未变化时复用过滤结果
+  if ($[0] !== products) {
+    t0 = products.filter((product) => product.visible)
+    $[0] = products
+    $[1] = t0
+  } else {
+    t0 = $[1]
+  }
+
+  const visibleProducts = t0
+  let t1
+
+  // useCallback 等价：onSelect 未变化时复用回调函数
+  if ($[2] !== onSelect) {
+    t1 = (product) => onSelect(product.id)
+    $[2] = onSelect
+    $[3] = t1
+  } else {
+    t1 = $[3]
+  }
+
+  const handleSelect = t1
+  let t2
+
+  // memo 等价：子组件 props 未变化时复用元素，跳过子树重算
+  if ($[4] !== visibleProducts || $[5] !== handleSelect) {
+    t2 = (
+      <ProductGrid
+        products={visibleProducts}
+        onSelect={handleSelect}
+      />
+    )
+    $[4] = visibleProducts
+    $[5] = handleSelect
+    $[6] = t2
+  } else {
+    t2 = $[6]
+  }
+
+  return t2
+}
+```
+
+</Tab>
+</Tabs>
+
+Compiler 主要优化两类更新成本：
+
+- 父组件更新时，跳过输入没有变化的子组件重新计算；
+- 缓存组件或 Hook 中可复用的昂贵计算。
+
+它不会缓存任意普通函数的结果，也不会替代数据请求缓存、服务端缓存或列表虚拟化。Compiler 也不会改变组件的业务语义，不能因此省略必要的状态同步或 Effect 清理。
+
+### 增量接入与验证
+
+接入时建议采用增量方式：
+
+1. 先确认项目和构建工具的兼容版本；
+2. 在一个边界明确的目录或页面启用；
+3. 使用 React Profiler 或 Performance Tracks 对比启用前后的更新成本；
+4. 保留已有的 `useMemo`、`useCallback` 和 `memo`，只有在验证行为和性能都没有回退后再清理。
+
+React Compiler 能减少手写 memoization 的数量，但「减少手写代码」不等于「不需要测量」。如果组件本身的计算、数据传输或网络请求才是瓶颈，Compiler 也不会直接解决问题。
+
+## 总结
+
+React 19+ 的这些能力解决的是不同问题：Actions 组织异步提交，`useOptimistic` 缩短用户感知的等待，`Activity` 管理隐藏内容，`cache` 复用服务端 Render 中的重复读取，`cacheSignal` 管理服务端请求生命周期，Performance Tracks 提供性能证据，React Compiler 则负责构建时的 memoization。
+
+它们不能互相替代，也不能代替性能测量。先确定瓶颈属于交互、Render、请求、资源加载还是诊断，再选择对应能力，才能判断改动是否真的有效。

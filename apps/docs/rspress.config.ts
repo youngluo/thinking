@@ -55,6 +55,7 @@ const d2PreRenderOptions: D2PreRenderOptions = {
       theme-overrides: {
         B1: "#333"
         B2: "#333"
+        N4: "#E2E3F5"
       }
     }
   }
