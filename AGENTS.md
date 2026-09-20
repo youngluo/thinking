@@ -2,140 +2,74 @@
 
 @/Users/young/.codex/RTK.md
 
----
+## 项目结构
 
-## 项目指南
+Turbo monorepo，pnpm workspace 收录 `apps/*` 与 `packages/*`：
 
-本文件为在此仓库中工作的编码代理提供项目指导。
+| 路径 | 说明 |
+| --- | --- |
+| `apps/docs/` | Rspress 文档站点（`@thinking/docs`） |
+| `packages/utils/` | TypeScript 工具库（`@thinking/utils`） |
+| `packages/rc/` | React 组件库（`@thinking/rc`，目前只有入口占位） |
 
-- 默认不要自动使用 superpowers skill；只有用户或项目文档明确要求时才使用；如果是 apps/docs/ 下的文档编写，则只是有 brainstorm skill，跳过其它与文档无关的 skill。
-- 所有 shell 命令必须按 RTK 规则加 `rtk` 前缀。
-- 修改文档后不要自动执行 `rtk pnpm docs:build`；只有用户明确要求验证构建时才运行。
+- `packages/utils/src/` 按主题分目录：`算法/`、`数据结构/`、`设计模式/`、`函数式/`、`工具函数/`；Jest 用例放在各主题下的 `__tests__/`。
+- `apps/docs/` 下 `experiences/`、`ai/`、`interview/` 是手写内容；`code/` 由脚本生成，不手改。
 
 ## 常用命令
 
 ```bash
-rtk pnpm test           # 运行全部测试（turbo）
-rtk pnpm build          # 构建所有包（turbo）
-rtk pnpm docs:dev       # 启动 Rspress 文档开发服务器
-rtk pnpm docs:build     # 构建 Rspress 文档
+rtk pnpm test           # 全部包测试（turbo run test）
+rtk pnpm build          # 构建所有包
+rtk pnpm docs:dev       # Rspress 开发服务器 + 代码文档 watch
+rtk pnpm docs:build     # 先生成代码文档，再构建站点
 ```
 
-- 单个包测试：`rtk pnpm test --filter=@thinking/utils`
+- 单个包测试：`rtk pnpm test --filter=@thinking/utils`（目前只有该包定义了 `test` 脚本）。
+- 仓库没有 `lint` 脚本；ESLint 与 Prettier 通过 husky + lint-staged 在提交时对 `*.{ts,tsx,js,jsx}` 生效。
 
-## 提交规则
+## 代码文档生成机制
 
-所有提交都必须使用 `commit` skill，并生成符合 Conventional Commits 的提交信息。
+脚本在 `apps/docs/scripts/`：
 
-## 编码行为准则
+- `code-docs.ts` 扫描 `packages/utils/src/**/*.ts`（跳过 `__tests__/`），把每个 `export function|class|const` 及其前面的 `/** ... */` 注释写成 `apps/docs/code/<主题>/` 下的页面。
+- JSDoc 中 `@summary` 决定条目标题，其余非 `@` 行作为正文，`@param` 等标签行会被丢弃。
+- `docs-dev.ts` 在启动 `rspress dev` 前先同步生成一次，再持续 watch。
 
-以下准则用于减少常见的编码代理错误。它们偏向谨慎而不是速度；处理简单任务时应结合实际情况判断。
+因此工具库源码的 API 说明必须写在 `/** ... */` 里，否则生成的页面只有代码没有解释。
 
-### 1. 先想清楚再编码
+## 写作规范
 
-不要假设，不要掩盖不确定性，要主动说明取舍。
+### Rspress 文档
 
-- 实现前明确说明假设；如果不确定，先提问。
-- 如果存在多种理解，不要静默选择，应说明可选解释。
-- 如果有更简单的方案，应直接指出；必要时可以提出反对意见。
-- 如果需求不清楚，应停下来说明哪里不清楚，并向用户确认。
-
-### 2. 简单优先
-
-用最少的代码解决问题，不做推测性设计。
-
-- 不添加用户没有要求的功能。
-- 不为单次使用的代码抽象新接口。
-- 不添加未被要求的灵活性或可配置项。
-- 不为不可能发生的场景增加错误处理。
-- 如果 200 行代码可以改成 50 行，应主动简化。
-
-判断标准：资深工程师是否会认为这个实现过度复杂。如果是，就继续简化。
-
-### 3. 精准修改
-
-只修改必须修改的内容，只清理自己造成的问题。
-
-- 不顺手“优化”相邻代码、注释或格式。
-- 不重构没有问题的代码。
-- 匹配现有风格，即使你个人会用不同写法。
-- 发现无关的废弃代码时，只说明问题，不要直接删除。
-- 删除由本次改动造成的无用导入、变量或函数。
-- 不删除本来就存在的死代码，除非用户明确要求。
-
-判断标准：每一行改动都应该能追溯到用户请求。
-
-### 4. 目标驱动执行
-
-把任务转化为可验证的目标，并持续迭代到验证完成。
-
-- “添加校验”应转化为：为非法输入编写测试，再让测试通过。
-- “修复 bug”应转化为：先写出复现问题的测试，再修复并通过测试。
-- “重构 X”应转化为：确保重构前后测试都能通过。
-
-多步骤任务应给出简短计划：
-
-```text
-1. [步骤] -> verify: [检查方式]
-2. [步骤] -> verify: [检查方式]
-3. [步骤] -> verify: [检查方式]
-```
-
-成功标准越清晰，越能独立完成循环。像“让它工作”这类模糊目标，应先澄清。
-
-## 架构
-
-这是一个 Turbo monorepo：
-
-```text
-apps/docs/                 # Rspress 文档站点
-packages/utils/            # @thinking/utils，TypeScript 工具库
-packages/rc/               # @thinking/rc，React 组件库
-turbo.json                 # 构建流水线配置
-pnpm-workspace.yaml        # 工作区包配置
-tsconfig.base.json         # 共享 TypeScript 配置
-```
-
-`packages/utils/src/` 按主题组织源码：
-
-```text
-算法/
-数据结构/
-设计模式/
-函数式/
-工具函数/
-```
-
-Rspress 文档位于 `apps/docs/`。文档生成脚本是 `scripts/generate-docs.ts`，生成内容位于 `apps/docs/code/`。
-
-修改 `apps/docs/` 中的 Rspress 相关内容时，可参考 Rspress 官方 LLM 文档：
+修改 `apps/docs/` 中的 Rspress 相关内容时，可参考官方 LLM 文档：
 
 - https://rspress.rs/llms.txt
 - https://rspress.rs/guide/start/introduction.md
 
-编写 Rspress 文档代码块时：
+代码块规则：
 
-- 代码块默认添加 `fold`，除非代码很短且需要直接展开对照阅读。
-- 代码块对应具体文件路径时，把文件路径写到代码块的 `title` 配置里，例如 ```ts fold title="src/App.tsx"。
-- 展示事件监听时，避免只包含注释的匿名空回调，例如 `() => { /* comment */ }`；更推荐先声明命名函数，再传给 `addEventListener`。
-- 示例代码中，函数、类型、类等 API 说明使用 `/** ... */`；函数体内部的局部说明使用 `//`。
+- 默认添加 `fold`，除非代码很短且需要直接展开对照阅读。
+- 代码块对应具体文件路径时，把路径写进 `title` 配置，例如 ```ts fold title="src/App.tsx"。
+- 函数、类型、类等 API 说明用 `/** ... */`；函数体内部的局部说明用 `//`。
 
-编写 blog 或技术文章时：
+### blog 与技术文章
 
-- 新建文章的 frontmatter 默认设置 `draft: true`，`createdAt` 使用创建文件时的当前时间，格式为 `YYYY-MM-DD HH:mm`。
-- 发布文章时将 `draft` 设置为 `false`，并将 `createdAt` 更新为发布时的当前时间，格式为 `YYYY-MM-DD HH:mm`。
-- 没有特殊说明时，文件名（不含扩展名）应与文章标题一致。
-- 技术表述要精准，但不要为了精准堆叠冗余解释。优先写清“谁在什么时候做什么、输入是什么、输出是什么、边界在哪里”，避免只写空泛概括。
-- 机制类段落优先给出明确职责拆分，例如不同阶段、模块或角色分别负责什么。如果一个细节已在后文展开，前文只保留结论和必要边界，不重复展开。
-- 术语要在同一语境内保持一致，不为了显得专业而使用自造或含混词；如果必须区分层次，直接写具体对象、模块、阶段或数据结构。
+- 新建文章的 frontmatter 默认 `draft: true`，`createdAt` 用创建文件时的当前时间，格式 `YYYY-MM-DD HH:mm`。
+- 发布时把 `draft` 改为 `false`，并把 `createdAt` 更新为发布时的当前时间，格式不变。
+- 没有特殊说明时，文件名（不含扩展名）与文章标题一致。
+- 正文的技术表述、结构与语言质量按 `polish` skill 的标准执行，撰写新文章与优化已有文章都适用。
 
-## D2 规范
+### D2 图
 
-- 表示流程（如数据流、调用链、状态转换、流水线步骤）时，避免使用 ```text 代码块，应优先使用 d2 图。
-- D2 全局样式统一配置在 `apps/docs/rspress.config.ts` 的 `d2PreRenderOptions` 中，单篇文档不要重复声明全局样式或切换主题。
-- 所有节点、分组标题和连线都使用 D2 默认样式；不要单独设置文字颜色、线条颜色、边框、圆角、箭头样式。
+- 表示流程（数据流、调用链、状态转换、流水线步骤）时避免 ```text 代码块，优先用 d2 图。
+- 全局样式统一配置在 `apps/docs/rspress.config.ts` 的 `d2PreRenderOptions` 中，单篇文档不重复声明全局样式，也不切换主题。
+- 所有节点、分组标题和连线都用 D2 默认样式；不单独设置文字颜色、线条颜色、边框、圆角、箭头样式。
+- 最外层系统名用 D2 `title`（如 `title: |md` 配合 `{near: top-center}`）；分组只表达真实的结构边界，不为装饰增加外层容器，按对象间实际关系安排层级，避免把并列对象强行嵌套。
+- `grid-rows`、`grid-columns` 适合强调等距对齐，但网格内连线会走中心到中心的直线。需要弧线或自动寻路时优先普通布局；确需网格时，再用 `vertical-gap` 或 `horizontal-gap` 为连线标签留出空间。
 
-复杂架构图通用规则：
+## 协作约定
 
-- 最外层系统名使用 D2 `title`（如 `title: |md` 配合 `{near: top-center}`）；分组只表达真实的结构边界，不为装饰增加外层容器。按对象间的实际关系安排层级，避免把并列对象强行嵌套。
-- `grid-rows`、`grid-columns` 适合强调等距对齐，但网格内的连线会采用中心到中心的直线。需要弧线或自动寻路时，优先使用普通布局；确需使用网格时，再通过 `vertical-gap` 或 `horizontal-gap` 为连线标签留出空间。
+- 所有 shell 命令按 RTK 规则加 `rtk` 前缀。
+- 修改文档后不要自动执行 `rtk pnpm docs:build`；只有用户明确要求验证构建时才运行。
+- 默认不自动使用 superpowers skill，只有用户或项目文档明确要求时才用；`apps/docs/` 下的文档编写只保留 brainstorm skill，跳过其它与文档无关的 skill。
+- 所有提交都必须使用 `commit` skill，并生成符合 Conventional Commits 的提交信息。
