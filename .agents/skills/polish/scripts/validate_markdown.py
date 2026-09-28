@@ -32,8 +32,8 @@ def validate_title(errors: list[str], path: Path, line: int, title: str) -> None
     value = title.strip().strip("\"'")
     if NUMBERED_TITLE_RE.match(value):
         fail(errors, path, line, "标题不能带序号")
-    if "`" in value:
-        fail(errors, path, line, "标题不能使用反引号")
+    if "`" in value or "<code>" in value:
+        fail(errors, path, line, "标题不能使用行内代码")
     if ":" in value or "：" in value:
         fail(errors, path, line, "标题不能使用冒号")
     if any(character in value for character in DASH_CHARACTERS):
