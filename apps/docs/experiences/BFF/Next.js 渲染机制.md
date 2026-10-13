@@ -4,7 +4,7 @@ createdAt: '2026-08-03 18:00'
 
 # Next.js 渲染机制
 
-Next.js 是基于 React 的全栈 Web 框架，提供文件路由和服务端渲染等能力。本文以 App Router 的一次页面请求为线索，说明页面如何从服务端生成内容，并在浏览器中呈现和恢复交互。
+Next.js 是基于 React 的全栈 Web 框架，提供文件路由和服务端渲染等能力。本文以 App Router 的一次页面请求为例，说明页面如何从服务端生成内容，并在浏览器中呈现和恢复交互。
 
 ## RSC 与 SSR 基础链路
 
@@ -14,10 +14,12 @@ Next.js 是基于 React 的全栈 Web 框架，提供文件路由和服务端渲
 
 首次请求的服务端渲染主要包含两个阶段：
 
-1. React 执行匹配路由的 Server Component，将渲染结果编码为 RSC payload；
-2. Next.js 使用 RSC payload 和 Client Component 的模块信息预渲染 HTML，供浏览器直接显示首屏。
+- React 执行匹配路由的 Server Component，将渲染结果编码为 RSC payload；
+- Next.js 使用 RSC payload 和 Client Component 的模块信息预渲染 HTML，供浏览器直接显示首屏。
 
 Client Component 也会参与 HTML 预渲染，因此交互元素可以出现在首屏 HTML 中。它在浏览器中的状态、事件和 Effect 要等到 Hydration 后才会生效。
+
+下图展示了首次请求中 RSC payload 与 HTML 的生成和返回过程：
 
 ```d2 maxHeight=400
 shape: sequence_diagram
@@ -46,12 +48,12 @@ RSC payload 是由 Server Components 生成的、供客户端 React 消费的数
 
 ### 首次响应中的 HTML 与 RSC payload
 
-以一个文章页面为例，观察首次响应中 HTML 与 RSC payload 分别承载什么。`Page` 是 Server Component，`LikeButton` 是 Client Component：
+以一个文章页面为例，观察首次响应中 HTML 与 RSC payload 分别承载什么。`ArticlePage` 是 Server Component，`LikeButton` 是 Client Component：
 
 ```tsx fold title="app/article/[id]/page.tsx"
 import { LikeButton } from './like-button'
 
-export default async function Page({ params }: { params: Promise<{ id: string }> }) {
+export default async function ArticlePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const article = await getArticle(id)
 
@@ -76,9 +78,9 @@ export function LikeButton({ count }: { count: number }) {
 }
 ```
 
-假设文章当前有 0 个赞，`Page` 在服务端执行并获取文章数据。RSC payload 记录 `Page` 的渲染结果，并为 `LikeButton` 保留模块引用和 `count: 0` 这个 prop。Next.js 再结合这份 RSC payload 和 Client Component 的模块信息预渲染 HTML，其中既有文章内容，也有按钮。
+假设文章当前有 0 个赞，`ArticlePage` 在服务端执行并获取文章数据。RSC payload 记录 `ArticlePage` 的渲染结果，并为 `LikeButton` 保留模块引用和 `count: 0` 这个 prop。Next.js 再结合这份 RSC payload 和 Client Component 的模块信息预渲染 HTML，其中既有文章内容，也有按钮。
 
-首次访问通常返回一个 `text/html` 响应，其中同时包含 HTML 和以 chunk 形式内嵌的 RSC payload：HTML 以普通标签写入响应，RSC chunk 则通过内联脚本写入 Next.js 的客户端数据队列。下面只截取与当前示例相关的片段：
+首次访问通常返回一个 `text/html` 响应，其中同时包含 HTML 和以 chunk 形式内嵌的 RSC payload。HTML 以普通标签写入响应，RSC chunk 则通过内联脚本写入 Next.js 的客户端数据队列。下面的片段展示了上述 `ArticlePage` 和 `LikeButton` 组件在本例中的渲染结果：
 
 ```html
 <article>
@@ -96,7 +98,7 @@ export function LikeButton({ count }: { count: number }) {
 
 ### 嵌套布局如何进入 RSC payload
 
-RSC payload 不只包含页面内容，也包含当前路由上各级布局的渲染结果。假设访问 `/blog/hello` 时，路由依次经过 `RootLayout`、`AppLayout` 和 `BlogLayout`，最终渲染 `BlogPage`。App Router 会按路由层级将这些布局和页面组合成一棵组件树，并把它们的服务端渲染结果写入当前路由的 RSC payload。
+RSC payload 不只包含页面内容，也包含当前路由上各级布局的渲染结果。假设访问 `/article/42` 时，路由依次经过 `RootLayout`、`AppLayout` 和 `ArticleLayout`，最终渲染 `ArticlePage`。App Router 会按路由层级将这些布局和页面组合成一棵组件树，并把它们的服务端渲染结果写入当前路由的 RSC payload。
 
 后续客户端导航时，Next.js 获取目标路由的 RSC payload，客户端复用已加载的共享布局，再将新的路由段合并到现有组件树中。
 
@@ -126,35 +128,37 @@ reconciler -> dom: 按顺序匹配并关联已有 DOM
 reconciler -> browser: 关联 ref、执行 Effect，恢复客户端交互
 ```
 
-下面仍以前面的 `Page` 和 `LikeButton` 为例，将时序图中的抽象流程对应到具体节点。
+下面仍以前面的 `ArticlePage` 和 `LikeButton` 为例，将时序图中的抽象流程对应到具体节点。
 
 ### 从 RSC payload 到可交互页面
 
 Hydration 要把服务端已经生成的 DOM 与 React 运行时所需的数据和组件逻辑连接起来。当前示例包含三类信息：
 
 - 浏览器已经根据 HTML 生成 `article`、`h1`、`p` 和 `button` DOM 元素；
-- RSC payload 记录 `Page` 的渲染结果、`LikeButton` 的模块引用和 `count: 0`；
+- RSC payload 记录 `ArticlePage` 的渲染结果、`LikeButton` 的模块引用和 `count: 0`；
 - Client Component JavaScript 包含 `LikeButton` 的组件逻辑。
 
 页面此时已经可见，但浏览器中还没有 `LikeButton` 的 Hook 状态和点击处理逻辑。接下来，React 按以下过程把这三类内容连接起来：
 
-1. React Flight 解析 RSC chunk，还原 React 元素、数据和 Client Component 模块引用。RSC payload 不包含 Fiber，也不包含 `Page` 的组件函数，因此浏览器不会重新执行 `Page`；
+1. React Flight 解析 RSC chunk，还原 React 元素、数据和 Client Component 模块引用。RSC payload 不包含 Fiber，也不包含 `ArticlePage` 的组件函数，因此浏览器不会重新执行 `ArticlePage`；
 2. Next.js 根据模块引用加载 `LikeButton` 的客户端 JavaScript；
-3. Next.js 客户端运行时调用 `hydrateRoot`，Reconciler 开始 Hydrate。它遍历 RSC payload 还原出的 React 元素树：遇到 `article`、`h1`、`p` 等原生元素时创建对应的 Host Fiber；遇到 `LikeButton` 时先创建组件 Fiber，用 `count: 0` 调用组件函数，再为返回的 `button` 创建 Host Fiber；
-4. Reconciler 创建 Host Fiber 时尝试匹配已有 DOM。`article`、`h1`、`p` 和 `button` 的 Host Fiber 都与对应 DOM 节点建立关联；
-5. Render 阶段，`LikeButton` 的组件 Fiber 创建 Hook 状态，`button` Host Fiber 记录 `onClick` 等 props；Commit 阶段，React 关联 ref、完成事件处理所需的信息并执行 Effect。此后点击按钮，`setLikes` 会更新状态并修改已复用 DOM 中的文本。
+3. Next.js 客户端运行时调用 `hydrateRoot`，Reconciler 开始 Hydrate。它遍历 RSC payload 还原出的 React 元素树。遇到 `article`、`h1`、`p` 等原生元素时，会创建对应的 Host Fiber；遇到 `LikeButton` 时，会先创建组件 Fiber，以 0 作为 `count` prop 调用组件函数。组件执行完成后，React 再为返回的 `button` 创建 Host Fiber；
+4. Reconciler 处理 `article`、`h1`、`p` 和 `button` 的 Host Fiber 时，按遍历顺序匹配并关联已有 DOM，同时校验节点类型和文本是否一致。`button` Host Fiber 记录按钮文本和 `onClick` 等 props，React 还会将当前 props 保存在对应 DOM 节点上，供事件系统读取处理函数；
+5. Render 完成后，React 进入 Commit 阶段，提交 Fiber 树并完成 Hydration。若组件使用了 ref 或 Effect，React 会在提交时挂载 ref、执行 `useLayoutEffect`，并在提交后按调度执行 `useEffect`。
+
+此时按钮已能响应点击，`onClick` 会调用 `setLikes` 更新状态，并刷新页面中的点赞数。
 
 Server Component 生成的元素和 Client Component 返回的元素，都会参与同一套 DOM 匹配过程。Hook 状态和交互逻辑则来自 Client Component 在浏览器中的执行。
 
 ### Fiber 与 DOM 如何匹配
 
-Hydration 时，React 按深度优先顺序遍历 Fiber 树，并按相同顺序查找可以复用的 DOM 节点。只有 Host Fiber 对应实际的 DOM 节点，组件 Fiber 和 Fragment 不会单独消耗一个 DOM 节点。
+Hydration 时，React 按深度优先顺序遍历 Fiber 树，并按相同顺序查找可以复用的 DOM 节点。其中，Host Fiber 对应实际的 DOM 节点；组件 Fiber 和 Fragment 本身不对应独立的 DOM 节点。
 
-以 `Page + LikeButton` 为例，React 处理完 `article`、`h1` 和 `p` Host Fiber 后，遍历到 `LikeButton` 组件 Fiber。这个组件 Fiber 不对应 DOM 节点，继续处理它返回的 `button` Host Fiber 时，React 才会匹配下一个 `button` DOM 节点。
+以 `ArticlePage + LikeButton` 为例，React 处理完 `article`、`h1` 和 `p` Host Fiber 后，遍历到 `LikeButton` 组件 Fiber。这个组件 Fiber 不对应 DOM 节点，继续处理它返回的 `button` Host Fiber 时，React 才会匹配下一个 `button` DOM 节点。
 
 找到候选节点后，React 先检查 DOM 节点的类型。Host Fiber 对应元素时，候选节点需要是相同标签的元素；Host Fiber 对应文本时，候选节点需要是文本节点。类型匹配后，React 建立 Fiber 与 DOM 的关联，再校验文本和属性是否一致。
 
-整个匹配过程有三个关键点。遍历顺序决定匹配位置，节点类型决定能否复用，文本和属性用于校验内容。如果节点结构或内容无法与服务端结果对齐，就会出现 Hydration mismatch。
+整个匹配过程有三个关键点。遍历顺序决定匹配位置，节点类型决定能否复用，文本和属性用于校验内容。匹配结果与服务端输出不一致时，就会出现 Hydration mismatch。
 
 ### Hydration mismatch
 
@@ -277,7 +281,7 @@ App Router 中的组件默认是 Server Component。如果组件需要状态、�
 
 Server Component 可以渲染 Client Component。跨边界传递的数据会通过 props 进入 Client Component，因此这些 props 必须能被 React 序列化。普通函数不能直接跨越边界，Server Function 除外。
 
-Client Component 不能直接导入 Server Component，也不能把依赖服务端能力的模块作为普通依赖引入。如果 Client Component 需要包含 Server Component 的内容，应由上层 Server Component 负责组合，再通过 `children` 等 props 传入：
+Client Component 不能直接导入 Server Component，也不能把依赖服务端能力的模块作为普通依赖引入。如果 Client Component 需要包含 Server Component 的内容，应由上层 Server Component 负责组合，再通过 `children` 等 props 传入，例如：
 
 ```tsx fold title="app/page.tsx"
 import { Cart } from './cart'
@@ -292,13 +296,13 @@ export default function Page() {
 }
 ```
 
-在这个例子中，`Page` 是 Server Component，负责组合 `Modal` 和 `Cart`。`Modal` 只负责交互和展示 `children`，`Cart` 仍由服务端渲染，不会因为作为 `children` 传入而变成 Client Component。
+在这个例子中，`Page` 是 Server Component，负责组合 `Modal` 和 `Cart`。`Modal` 是 Client Component，负责交互和展示 `children`；`Cart` 仍由服务端渲染，不会因为作为 `children` 传入而变成 Client Component。
 
 ### 特殊边界
 
-除了通过 `'use client'` 建立组件边界，还可以通过模块标记限制运行环境，或通过动态导入跳过服务端预渲染。
+除了通过 `'use client'` 建立组件边界外，还可以用 `server-only` 和 `client-only` 限制模块的运行环境，或通过动态导入跳过服务端预渲染。
 
-`server-only` 和 `client-only` 用于限制模块的运行环境。数据库模块只能被服务端模块引用：
+数据库模块只能被服务端模块引用：
 
 ```ts fold title="lib/db.ts"
 import 'server-only'

@@ -69,6 +69,7 @@ rtk pnpm docs:build     # 先生成代码文档，再构建站点
 
 ## 协作约定
 
+- 开始修改仓库文件前，先检查文档站点开发服务是否已运行；未运行时启动 `rtk pnpm docs:dev`，复用已有进程并保持服务运行，以便浏览器预览和验证改动。
 - 所有 shell 命令按 RTK 规则加 `rtk` 前缀。
 - 修改文档后不要自动执行 `rtk pnpm docs:build`；只有用户明确要求验证构建时才运行。
 - 默认不自动使用 superpowers skill，只有用户或项目文档明确要求时才用；`apps/docs/` 下的文档编写只保留 brainstorm skill，跳过其它与文档无关的 skill。
