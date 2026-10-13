@@ -5,593 +5,308 @@ draft: true
 
 # Next.js 实践
 
-Next.js 16 拿到一个需求后，先定路由时机，再定数据缓存，最后定交互通道。本文按这个顺序展开。
+Next.js 把组件渲染、数据缓存和服务端变更交给不同的机制处理。数据可以在服务端读取，却未必能跨请求复用；数据库写入已经成功，页面也可能继续显示旧结果。做好应用，需要把组件边界、数据新鲜度和变更后的更新方式一起设计。
 
-所有内容以 `cacheComponents: true` 为前提。
+本文以 Next.js 16.4 App Router 为基准，从默认行为开始，说明如何组织数据与交互、定制缓存和渲染，再处理请求隔离与部署约束。新项目推荐开启 Cache Components，手动创建或升级的项目应先核对配置。
 
-## 目标画面
+## 默认行为
 
-把六类常见页面先摆出来。后面每一节的判断，都回到这张表的某个格子。
+App Router 中的组件默认按 Server Component 处理。数据读取和静态结构优先留在服务端；需要状态、事件或浏览器 API 时，使用 `'use client'` 为相应组件建立客户端边界。
 
-| 场景       | 渲染时机              | 数据策略                       | 交互通道                              |
-| ---------- | --------------------- | ------------------------------ | ------------------------------------- |
-| 营销页     | Static                | 编译期可确定的纯输入           | 少量 Client Component（导航折叠、表单） |
-| 文章详情   | Static 壳 + Cached    | `use cache` 缓存文章内容       | `generateStaticParams` 枚举 slug      |
-| 商品列表   | PPR（静态壳 + 动态）  | `cacheLife('hours')` 缓存商品  | 用户态用 `<Suspense>` 隔离            |
-| 个人中心   | Dynamic               | 读 `cookies()` / session       | 表单走 Server Action + `<form action>` |
-| 后台管理   | 局部 CSR              | 客户端请求，必要时 `ssr: false`| Server Action 触发变更                |
-| 实时仪表盘 | Dynamic               | 客户端订阅                     | Client Component 中 WebSocket         |
+### 页面与数据
 
-这张表不要求背。
+Server Component 可以直接调用数据库或服务端 SDK 获取数据。在同一应用中读取服务端数据时，通常不必先创建 Route Handler 再通过 HTTP 调用自己；这样可以减少一次内部往返，也能让凭证和数据访问逻辑留在服务端。
 
-## 渲染时机
+启用 Cache Components 后，服务器端 `fetch` 默认不会跨请求复用结果。外部 HTTP 数据可以封装为异步函数，并在其中检查响应状态、解析结果：
 
-看一段代码在服务端什么时刻被调用——构建期、缓存期、请求期——就决定了它的渲染模式。组件实际用了什么 API，就归入哪个时机，不用额外声明。
-
-### API 决定时机
-
-```ts
-// 静态：只 await 编译期可确定的输入（同步 I/O、模块导入、纯计算）
-import config from './config.json'
-export default async function Page() {
-  return <h1>{config.title}</h1>
-}
-
-// 缓存：用 use cache 标记，结果按 cacheLife 缓存
-import { cacheLife } from 'next/cache'
-export async function getProducts() {
-  'use cache'
-  cacheLife('hours')
-  return db.products.findAll()
-}
-
-// 动态：使用 runtime API
-import { cookies } from 'next/headers'
-export default async function Page() {
-  const theme = (await cookies()).get('theme')?.value ?? 'light'
-  return <p>主题：{theme}</p>
+```ts fold title="lib/data.ts"
+export async function loadData() {
+  const response = await fetch('https://api.example.com/data')
+  if (!response.ok) throw new Error('数据读取失败')
+  return response.json()
 }
 ```
 
-混合模式是常态：静态和动态片段共存，靠 Suspense 隔离。
+需要跨请求复用 `loadData` 的结果时，可在函数中添加 `'use cache'`，并用 `cacheLife` 设置缓存时效。
 
-### 三类渲染时机
+### 加载与失败
 
-| 渲染时机        | 何时执行                                  | 数据来源                                                      | 失效方式                            |
-| --------------- | ----------------------------------------- | ------------------------------------------------------------- | ----------------------------------- |
-| 静态（Static）  | 构建期                                    | 编译时已确定的输入                                            | 重新构建部署                        |
-| 缓存（Cached）  | 构建期或首次请求，缓存到 cacheLife 过期   | 任意 async 工作                                               | 时间过期 / `revalidateTag` 主动失效 |
-| 动态（Dynamic） | 每次请求                                  | `cookies()` / `headers()` / `searchParams` / 未缓存的 `fetch` | 不缓存                              |
+启用 Cache Components 时，未缓存的异步读取需要 `<Suspense>` 边界。假设 `AsyncContent` 是调用 `loadData` 的服务端组件，父组件用 fallback 提供等待界面：
 
-PPR（Partial Prerendering）是 Cache Components 的默认行为：构建期生成静态壳，请求期把动态片段按 Suspense 边界流式拼到同一份响应里。
-
-行为与传统术语的对应：
-
-- **静态 → SSG**：构建期生成 HTML，失效靠重新构建部署
-- **缓存 → ISR**：构建期或首次请求生成，按 `cacheLife` 时间过期或 `revalidateTag` 主动失效
-- **动态 → SSR**：每次请求服务端渲染，不缓存
-- **CSR**：服务端不输出 HTML 内容，纯浏览器渲染。在 App Router 中由 `'use client'` 组件 + `dynamic({ ssr: false })` 实现；它不在服务端执行，所以也不在三类渲染时机里
-
-### 在静态页面中嵌入动态片段
-
-要把用户态嵌进本来静态的路由，用 Suspense 把动态部分包起来：
-
-```tsx
-import { Suspense } from 'react'
-import { cookies } from 'next/headers'
-
-export default function Page() {
-  return (
-    <>
-      <h1>博客</h1>
-      <Suspense fallback={<p>正在读取主题...</p>}>
-        <ThemeDisplay />
-      </Suspense>
-    </>
-  )
-}
-
-async function ThemeDisplay() {
-  const theme = (await cookies()).get('theme')?.value ?? 'light'
-  return <p>当前主题：{theme}</p>
-}
+```tsx fold
+<Suspense fallback={<p>加载中...</p>}>
+  <AsyncContent />
+</Suspense>
 ```
 
-`ThemeDisplay` 是动态片段，按 Suspense 边界流式到达。静态壳先发出，浏览器先画出 header，主题等用户态后补。这条机制落在目标画面的「商品列表」上。
+页面级等待界面可以使用 `loading.tsx`，局部慢内容使用更靠近读取位置的 `<Suspense>`。未处理的渲染异常由最近的 `error.tsx` 边界提供异常界面，该文件需要声明 `'use client'`；确认资源不存在时用 `notFound()` 终止当前路由段的渲染，显示不存在界面。等待、空结果和异常分别处理，避免把所有失败都显示成空列表。
 
-### 强制推迟到请求期
+### 客户端交互
 
-某段代码无法在构建期完成，又不希望走 `use cache` 缓存（例如每次请求都要重新生成的非确定值），用 `connection()` 显式推迟：
+在需要交互的组件入口添加 `'use client'`，避免把无关依赖纳入客户端模块图。Client Component 仍会参与首屏预渲染，访问浏览器 API 的时机也要放在事件处理或 Effect 中；组件必须完全依赖浏览器环境时，再考虑跳过服务端预渲染。
 
-```tsx
-import { connection } from 'next/server'
-import { Suspense } from 'react'
+首屏数据优先在 Server Component 中读取。客户端需要轮询、订阅或跟随交互重新请求时，再使用客户端数据层；不要为了读取首屏数据，把整个页面搬到客户端。
 
-async function RandomId() {
-  await connection()
-  return <p>{crypto.randomUUID()}</p>
-}
+### Server Action
 
-export default function Page() {
-  return (
-    <Suspense fallback={<p>...</p>}>
-      <RandomId />
-    </Suspense>
-  )
-}
-```
+Server Action 适合表单驱动的服务端变更。普通 `<form action>` 会直接传入 `FormData`；服务端组件中的表单在 JavaScript 尚未加载时也能提交。
 
-`connection()` 让 React 推迟到请求期再执行这段组件，但不缓存结果——等价于强制走 Dynamic。和直接读 `cookies()` 的区别是：`connection()` 不依赖 request context。适合每次必须新生成、但不读用户态的场景，例如 A/B 测试桶、请求级 nonce。
+需要向表单返回校验状态时，Server Action 可与 `useActionState` 配合。下面先定义服务端 Action，后文再将它接入表单；`requireWritePermission` 和 `writeValue` 分别代表项目中的权限检查和数据写入：
 
-### generateStaticParams 预渲染动态路由
-
-构建期可枚举的动态路由，用 `generateStaticParams` 列出样本参数，让它们走构建期 prerender：
-
-```tsx
-// generateStaticParams 在构建期执行
-export async function generateStaticParams() {
-  const posts = await fetch('https://api.example.com/posts').then((r) => r.json())
-  return posts.map((post) => ({ slug: post.slug }))
-}
-
-export default async function Page({ params }: { params: Promise<{ slug: string }> }) {
-  const { slug } = await params
-  const post = await getPost(slug)
-  return <article>{post.title}</article>
-}
-```
-
-`generateStaticParams` 返回的样本走构建期；运行时收到未在样本中的参数按动态路径处理。如果业务上不希望兜底，加 `export const dynamicParams = false`。这条机制落在目标画面的「文章详情」上（Static 壳 + Cached 内容）。
-
-### 路由段配置
-
-`page.tsx` / `layout.tsx` 等文件里可以导出的少量路由级配置，主要与部署和动态参数控制相关，不影响渲染时机：
-
-| 配置              | 用途                                                           |
-| ----------------- | -------------------------------------------------------------- |
-| `dynamicParams`   | 控制 `generateStaticParams` 未覆盖的动态参数是否允许运行时渲染 |
-| `runtime`         | 选择 `nodejs` 或 `edge` 运行时                                 |
-| `preferredRegion` | 提示首选部署区域                                               |
-| `maxDuration`     | Server Action / Route Handler 的最长执行时间                   |
-
-**本节判断**：读到 `cookies()` / `headers()` / `searchParams` / `connection()` → Dynamic；读到 `use cache` → Cached；可枚举的纯输入 → Static + `generateStaticParams`。
-
-## 数据获取与缓存
-
-数据策略要分清两件事：作用域（请求内还是跨请求）和持久性（进程内存还是平台持久）。同一份数据在不同作用域应该走不同 API，否则要么每次都查，要么把不该共享的用户态数据意外共享出去。
-
-### 三类作用域
-
-| API                  | 作用域                   | 持久性                | 适用场景                                |
-| -------------------- | ------------------------ | --------------------- | --------------------------------------- |
-| React `cache()`      | 单次请求内               | 进程内存              | 多组件请求内共享一份数据                |
-| `use cache`          | 跨请求，按入参生成缓存键 | 进程内存（默认）      | 跨请求复用、入参稳定的新代码            |
-| `use cache: remote`  | 跨请求，按入参生成缓存键 | 平台提供（如 Redis）  | 跨请求复用、必须跨实例持久              |
-| `unstable_cache`     | 跨请求，按入参生成缓存键 | 进程内存              | 维护老代码、无法立刻迁移                |
-
-四者的边界：
-
-- React `cache()` 是**请求内去重**，多个组件在同一棵 RSC 树内调用同一份逻辑时用：
-
-  ```ts
-  import { cache } from 'react'
-
-  export const getUser = cache(async () => {
-    const res = await fetch('https://api.example.com/user')
-    return res.json()
-  })
-  ```
-
-- `use cache` 是**新版跨请求缓存**，需要 `cacheComponents: true`。同一段逻辑、不同入参分别缓存。默认 in-memory，serverless 不会跨实例持久。
-- `use cache: remote` 是 `use cache` 的持久版本，由平台提供 Redis 之类的后端；通常意味着额外的网络往返与平台费用，适合高价值缓存。
-- `unstable_cache` 是**旧版跨请求缓存 API**，新项目应该用 `use cache` 替代；只有维护老代码、没法立刻迁移时才继续使用。
-
-> 新项目的默认选择：请求内用 `cache()`，跨请求用 `use cache`；只有明确需要跨实例持久且能接受平台开销时升级到 `use cache: remote`。
-
-### fetch 在 Next.js 16 的默认行为
-
-Server Component 可以直接 await 数据源：
-
-```tsx
-export default async function Page() {
-  const res = await fetch('https://api.example.com/posts')
-  const posts = await res.json()
-  return (
-    <ul>
-      {posts.map((p) => (
-        <li key={p.id}>{p.title}</li>
-      ))}
-    </ul>
-  )
-}
-```
-
-注意：Next.js 16 中 `fetch` 默认不再缓存，每个请求都会重新发起——这是和 Next.js 14 的关键差异，迁移老代码时最容易踩坑。需要缓存时显式用 `use cache` 包裹。
-
-请求内自动去重仍然生效：同一棵 RSC 树内对相同 URL 与相同 fetch options 的多次调用只会发一次请求。跨请求共享需要显式使用 `use cache`。
-
-### use cache 指令
-
-`use cache` 标记函数或组件的输出可缓存。它可以放在文件、组件或函数顶部：
-
-```tsx
-import { cacheLife, cacheTag } from 'next/cache'
-
-export async function getProducts() {
-  'use cache'
-  cacheLife('hours')
-  cacheTag('products')
-
-  const res = await fetch('https://api.example.com/products')
-  return res.json()
-}
-```
-
-`cacheLife('hours')` 使用内置的 `hours` 档位（具体值随版本变化，使用前查官方文档）；`cacheTag('products')` 给该缓存打上标签，便于按标签失效。
-
-启用方式：
-
-```ts
-// next.config.ts
-import type { NextConfig } from 'next'
-
-const nextConfig: NextConfig = {
-  cacheComponents: true,
-}
-
-export default nextConfig
-```
-
-### cacheLife 与内置档位
-
-```ts
-import { cacheLife } from 'next/cache'
-
-export async function getProducts() {
-  'use cache'
-  cacheLife('hours')
-  // ...
-}
-```
-
-`cacheLife` 接受字符串档位或自定义对象。Next.js 默认提供 `default`、`minutes`、`hours`、`days`、`weeks`、`max` 等档位。每个档位包含三个时间维度：
-
-- `stale`：浏览器缓存视为新鲜的最长时间
-- `revalidate`：服务器缓存过期时长
-- `expire`：缓存彻底失效的时长
-
-### cacheTag 与失效
-
-```ts
-import { cacheTag } from 'next/cache'
-
-export async function getProducts() {
-  'use cache'
-  cacheTag('products')
-  return fetch('https://api.example.com/products').then((r) => r.json())
-}
-```
-
-```ts
-'use server'
-
-import { updateTag } from 'next/cache'
-
-export async function createProduct(formData: FormData) {
-  const name = formData.get('name') as string
-  await db.products.create({ data: { name } })
-  updateTag('products')
-}
-```
-
-`updateTag` 让当前请求立刻看到最新数据，并使所有持有 `products` 标签的缓存失效。`revalidateTag` 类似但不会立即重渲染当前路由。失效策略落在目标画面的「商品列表」上。
-
-### 运行时数据与 use cache 的边界
-
-`use cache` 函数内不能直接调用 `cookies()` / `headers()` / `searchParams`。需要这些值时，在缓存边界外读取并作为参数传入：
-
-```tsx
-import { cookies } from 'next/headers'
-import { Suspense } from 'react'
-
-export default function Page() {
-  return (
-    <Suspense fallback={<p>...</p>}>
-      <Profile />
-    </Suspense>
-  )
-}
-
-async function Profile() {
-  const sessionId = (await cookies()).get('session')?.value
-  return <CachedProfile sessionId={sessionId} />
-}
-
-async function CachedProfile({ sessionId }: { sessionId: string }) {
-  'use cache'
-  return fetchUser(sessionId)
-}
-```
-
-`sessionId` 进入 cache key，不同 session 各自缓存一份。`cookies()` 的调用位于缓存边界外，由 `<Suspense>` 隔离其请求期执行。
-
-### 请求隔离
-
-浏览器应用只服务当前用户，可以用模块级单例；Next.js 服务端会连续处理多个用户请求，但模块只初始化一次。
-
-```ts
-let requestCount = 0
-
-export async function GET() {
-  requestCount += 1
-  return Response.json({ requestCount })
-}
-```
-
-请求 A 写入 `requestCount = 1`，请求 B 会读到 `requestCount = 2`。写用户相关可变数据的模块级变量会跨请求污染——需要跨请求共享时用上面的缓存 API，不要用模块级变量。
-
-**本节判断**：同一请求内多组件共享一份数据 → `cache()`；跨请求复用、入参稳定 → `use cache` + `cacheLife`；明确要跨实例持久且能承担平台开销 → `use cache: remote`；老项目无法迁移 → `unstable_cache`。
-
-## Server Actions
-
-Server Action 是带 `'use server'` 指令的 async 函数。它最契合的场景是表单驱动的服务端变更。
-
-### 定义与调用
-
-```ts
-// app/actions.ts
+```ts fold title="app/actions.ts"
 'use server'
 
 import { revalidatePath } from 'next/cache'
+import { requireWritePermission, writeValue } from '@/lib/data'
 
-export async function createPost(formData: FormData) {
-  const title = formData.get('title') as string
-  const content = formData.get('content') as string
+type State = { message: string }
 
-  await db.posts.create({ data: { title, content } })
-  revalidatePath('/posts')
+export async function submitWithState(
+  _previousState: State,
+  formData: FormData,
+): Promise<State> {
+  await requireWritePermission()
+  const value = formData.get('value')
+  if (typeof value !== 'string' || !value.trim()) {
+    return { message: '内容不能为空' }
+  }
+
+  await writeValue(value.trim())
+  revalidatePath('/editor')
+  return { message: '已保存' }
 }
 ```
 
-在表单中调用：
+### 表单状态
 
-```tsx
-import { createPost } from './actions'
+需要提交状态和校验反馈时，使用 `useActionState`。它会把上一次状态作为 Action 的第一个参数，把表单数据作为第二个参数。客户端表单使用返回的 action，并根据状态展示反馈：
 
-export default function Page() {
-  return (
-    <form action={createPost}>
-      <input name="title" />
-      <textarea name="content" />
-      <button type="submit">发布</button>
-    </form>
-  )
-}
-```
-
-表单提交走单次服务端往返：服务端执行 action、返回新的 RSC payload、客户端更新视图。即使 JavaScript 加载失败，表单仍然可以提交——这是渐进增强的核心。这条机制落在目标画面的「个人中心」上。
-
-### useActionState 与 pending 态
-
-```tsx
+```tsx fold title="app/form.tsx"
 'use client'
 
 import { useActionState } from 'react'
-import { createPost } from './actions'
+import { submitWithState } from './actions'
 
-export function NewPostForm() {
-  const [state, action, pending] = useActionState(createPost, { ok: false })
-
+export function Form() {
+  const [state, action, pending] = useActionState(submitWithState, { message: '' })
   return (
     <form action={action}>
-      <input name="title" required />
-      <textarea name="content" required />
-      <button type="submit" disabled={pending}>
-        {pending ? '发布中...' : '发布'}
-      </button>
-      {state.ok && <p>已发布</p>}
-    </form>
-  )
-}
-```
-
-`useActionState` 返回 `[state, action, pending]`。`pending` 在 action 执行期间为 true——按钮 `disabled` 应该绑在 `pending` 上，避免用户重复提交。
-
-### 缓存失效
-
-```d2
-direction: right
-
-form: 表单提交
-sa: Server Action
-db: 数据库
-revalidate: revalidateTag / revalidatePath / updateTag
-client: 客户端重渲染
-
-form -> sa -> db
-db -> revalidate -> client
-```
-
-四个失效 API 的差异：
-
-- `revalidatePath(path)`：按路径失效路径下的缓存。粗粒度，但语义直接。
-- `revalidateTag(tag)`：按 tag 失效所有持该 tag 的缓存。细粒度，跨路径生效。
-- `updateTag(tag)`：`revalidateTag` 的升级版，失效并让当前路由立即重渲染。
-- `refresh()`：仅刷新 router cache（客户端 RSC 缓存），服务器缓存不动。
-
-### 鉴权
-
-Server Action 暴露为 HTTP POST，不能依赖 UI 隐藏来保护资源：
-
-```ts
-'use server'
-
-import { auth } from '@/lib/auth'
-
-export async function deletePost(formData: FormData) {
-  const session = await auth()
-  if (!session?.user) throw new Error('Unauthorized')
-
-  const id = formData.get('id') as string
-  await db.posts.delete({ where: { id } })
-  revalidatePath('/posts')
-}
-```
-
-每个 Server Action 都需要自行检查会话与权限。
-
-### 局限性
-
-- 只能通过 POST 调用，不能 GET；
-- 客户端派发与等待是串行的，不适合并行触发多个互不依赖的变更；
-- 不直接返回非可序列化值（函数、Symbol、循环引用等），需要通过 `useActionState` 把状态序列化进响应；
-- 与 `<form>` 原生配合最好；事件处理器中调用应该用 `useTransition` 或 `useActionState` 处理 pending。
-
-### 替代方案
-
-不是所有变更都该走 Server Action。出现下面任意一种信号时，考虑用 Route Handler + Client Component 替代：
-
-- 同一变更需要并行触发多个独立请求；
-- 客户端需要轮询进度或长连接（SSE、文件上传进度）；
-- 端点需要被非表单来源调用（外部 webhook、第三方 SDK、移动端原生壳）。
-
-## 实践中的常见问题
-
-按问题所属阶段分三组：渲染阶段、数据阶段、交互阶段。
-
-### 渲染阶段
-
-**'use client' 写在顶层**：整棵应用退化为 Client Component。首屏 HTML 仍然会渲染，但不再有意义——因为内容依赖客户端 JS。解决：把 `'use client'` 下移到具体叶子组件，让 layout、page、数据获取保持 Server Component。
-
-**RSC payload 过大**：RSC payload 是响应体的一部分，浏览器需要下载、解析、保留。Server Component 中如果把整张表传给页面，payload 会迅速膨胀：
-
-```tsx
-export default async function Page() {
-  const all = await db.query('SELECT * FROM large_table')
-  return <Table rows={all} />
-}
-```
-
-常见做法：
-
-- 服务端做聚合、分页后只传渲染需要的字段；
-- 列表通过分页或滚动加载按需取；
-- 大对象作为 Server Component 内部状态而非 props 透传。
-
-**把 SSR 当成性能保证**：Cache Components 默认走 PPR，静态壳构建期生成，动态片段请求期到达：
-
-- 静态壳足够快时，TTFB 主要由动态片段决定；
-- 动态片段串行调用多个慢接口会让用户更晚看到完整内容；
-- `<Suspense>` 只能解耦渲染时机，不能让数据本身变快；
-- 监控 TTFB、LCP、INP、服务端错误率，再决定是否上 `use cache` 或调整缓存档位。
-
-### 数据阶段
-
-**缓存了不该共享的内容**：
-
-```tsx
-// 错误：在 Server Component 中读 cookie 但被 use cache 标记
-export async function Page() {
-  'use cache'
-  const theme = (await cookies()).get('theme')?.value
-  return <p>{theme}</p>
-}
-```
-
-`use cache` 内不能直接读 `cookies()`，即使能编译通过也会把所有用户的 `theme` 当成同一份缓存。正确做法是把运行时数据作为参数传入缓存函数，或放在 `<Suspense>` 边界内按请求动态生成。
-
-**fetch 默认不再缓存**：Next.js 14 中 `fetch` 默认会被框架缓存；Next.js 16 默认不再缓存，每次请求都会重新发起。需要缓存时显式使用 `use cache`。
-
-**第三方库忘记包 Client 边界**：未自带 `'use client'` 的库（例如老的图表、富文本）在 Server Component 中直接使用会在编译期或运行期报错。解决办法是在项目里写一个 `'use client'` 的包装文件，让目标模块进入客户端模块图。
-
-### 交互阶段
-
-**Server Action 重复提交**：按钮没有禁用态时，用户可能多次点击导致 action 重复执行：
-
-```tsx
-'use client'
-
-import { useActionState } from 'react'
-import { createPost } from './actions'
-
-export function NewPostForm() {
-  const [state, action, pending] = useActionState(createPost, { ok: false })
-  return (
-    <form action={action}>
+      <input name="value" required />
       <button type="submit" disabled={pending}>
         {pending ? '提交中...' : '提交'}
       </button>
+      <p aria-live="polite">{state.message}</p>
     </form>
   )
 }
 ```
 
-`pending` 是判断按钮 `disabled` 的标准信号。
+输入错误等可预期失败通过状态返回，未预期异常交给异常处理机制。`useActionState` 不会转换不可序列化数据，参数和返回值仍需符合 React Server Functions 的序列化要求。从普通事件处理器派发 action 时，还要用 Action 或 Transition 管理提交上下文。
 
-**`useEffect` 中调用 Server Action**：
+### 提交安全
 
-```tsx
-'use client'
+Action 可被直接请求，每次执行都要在服务端检查会话、权限和输入。前端隐藏按钮或设置 `required` 不能代替这些检查。`pending` 禁用按钮只能减少重复点击，不能保证写入只执行一次；不能重复执行的操作需要服务端幂等键或唯一约束。
 
-import { useEffect } from 'react'
-import { recordView } from './actions'
+需要外部服务调用、客户端并行请求、轮询、上传进度或长连接时，优先使用 Route Handler。Server Action 面向服务端变更，不适合作为通用读取接口；挂载时通过 `useEffect` 触发写入，还要处理重复执行的问题。
 
-export function ViewCount({ id }: { id: string }) {
-  useEffect(() => {
-    recordView(id)
-  }, [id])
-  return <span>{id}</span>
+## 按需定制
+
+默认的数据读取与提交方式确定后，再按读取开销、共享范围、新鲜度和请求依赖定制行为。可复用的数据、当前用户的数据以及必须实时生成的内容，需要分别确定边界。
+
+### 读取性能
+
+互不依赖的读取优先同时发起，再等待结果；后一项依赖前一项的输出时，需要串行执行：
+
+```ts fold
+const [settings, summary] = await Promise.all([
+  loadSettings(),
+  loadSummary(),
+])
+```
+
+批量读取要限制并发，避免超过数据源的连接数或限流约束。查询时优先分页、筛选或聚合，并只向客户端返回必要字段，以减少下载和解析开销。
+
+排查性能问题时，结合服务端耗时、核心内容出现时机和交互长任务定位瓶颈。`<Suspense>` 只决定等待界面的呈现，不会缩短数据源耗时。
+
+### 缓存与更新
+
+缓存应放在结果允许复用、且能明确输入的读取或计算上。先确认它是一次渲染内的重复调用，还是需要跨请求复用；再确定缓存键、生命周期，以及写入后的更新方式。
+
+Cache Components 模型下，用 `'use cache'` 标记可复用的函数或组件。下面按 `key` 缓存读取结果，并为这类结果添加更新标签：
+
+```ts fold title="lib/cached-data.ts"
+import { cacheLife, cacheTag } from 'next/cache'
+
+export async function readCachedValue(key: string) {
+  'use cache'
+  cacheLife('hours')
+  cacheTag('data')
+
+  const response = await fetch(`https://api.example.com/data/${encodeURIComponent(key)}`)
+  if (!response.ok) throw new Error('数据读取失败')
+  return response.json()
 }
 ```
 
-`useEffect` 在浏览器执行，会向服务端发起请求。如果只是记录浏览次数，建议用 Server Component 在服务端直接记录，避免客户端请求往返。
+不同 `key` 对应不同缓存条目。`hours` 使用项目配置的档位，规定后台重新验证和最终过期的时机，不能当作精确的新鲜度保证。读写要求一致时，才能选择适合的档位；需要立即看到刚写入的数据时，还应主动更新缓存。
 
-## 如何选择
+更新 API 按范围和时效选择，标签必须先绑定到缓存：
 
-回到目标画面那张表，这里把判断维度拆开成四张子表。
+| 更新需求 | API | 行为与边界 |
+| --- | --- | --- |
+| 更新指定页面或布局 | `revalidatePath(path)` | 重新验证指定路径；在 Server Action 中可同步更新正在访问的目标页面 |
+| 用户写入后立即读取新值 | `updateTag(tag)` | 立即过期标签缓存，下一次读取等待新结果；仅用于 Server Action |
+| 内容更新允许短暂延迟 | `revalidateTag(tag, 'max')` | 后续读取可先返回旧值，再在后台更新；可用于 Server Action 或 Route Handler |
+| 重新读取当前页面 | `refresh()` | 仅用于 Server Action；刷新客户端路由，服务端标签缓存仍可命中 |
 
-### 路由维度：渲染时机
+先完成写入，再执行对应的更新操作。同一份数据被多个页面复用时，按标签更新覆盖所有相关条目；按路径更新不会替代跨页面的标签更新，刷新路由也不等于使数据缓存失效。
 
-| 场景                       | 渲染模式                                                  |
-| -------------------------- | --------------------------------------------------------- |
-| 内容构建期确定且可枚举     | Static（`generateStaticParams` 列出全部样本）             |
-| 内容公共但会定期更新       | Cached（`use cache` + `cacheLife`）                       |
-| 内容依赖请求身份或实时数据 | Dynamic（runtime API 或未缓存 fetch）                     |
-| 公共壳 + 个性化片段        | PPR 默认（静态壳 + Suspense 隔离动态）                    |
-| 不要求 SEO 的重交互后台    | 局部 CSR（`'use client'` 或 `dynamic({ ssr: false })`）   |
+### 请求期内容
 
-### 组件维度：执行位置
+`cookies()`、`headers()` 和页面的 `searchParams` 依赖当前请求。读取它们的组件放在局部 `<Suspense>` 内，公共数据仍可独立缓存；不要把整条路由的所有数据都当成同一种共享内容。
 
-| 场景                                       | 组件类型                                                  |
-| ------------------------------------------ | --------------------------------------------------------- |
-| 数据获取、静态结构、SEO 内容               | Server Component（默认）                                  |
-| 状态、事件处理、浏览器 API                 | Client Component（`'use client'`）                        |
-| 强依赖 `window` / `document`，无服务端降级 | 隔离为 Client Component，必要时 `dynamic({ ssr: false })` |
-| 表单与服务端变更                           | Server Action + `<form action>`                           |
-| Provider、Context                          | 包成 Client Component 后在 Server Component 中透传        |
+普通缓存边界内不能直接读取请求数据。需要缓存与用户身份相关的结果时，先验证会话，再把决定结果的用户标识传入缓存函数。这里的 `verifySession` 负责验证会话，`getProfile` 负责读取该身份可见的信息，调用 `RequestContent` 的父组件提供 `<Suspense>` 边界：
 
-### 数据维度：缓存 API 选择
+```tsx fold title="app/request-content.tsx"
+import { cookies } from 'next/headers'
+import { cacheLife } from 'next/cache'
+import { verifySession } from '@/lib/auth'
+import { getProfile } from '@/lib/data'
 
-| 场景                                       | API                              |
-| ------------------------------------------ | -------------------------------- |
-| 同一请求内多组件共享一份数据               | React `cache()`                  |
-| 跨请求复用、入参稳定、in-memory 即可       | `use cache` + `cacheLife`        |
-| 跨请求复用、必须跨实例持久                 | `use cache: remote`              |
-| 老项目无法立刻迁移                         | `unstable_cache`                 |
+export async function RequestContent() {
+  const token = (await cookies()).get('session')?.value
+  const session = await verifySession(token)
+  if (!session) return <p>未登录</p>
 
-### 交互维度：Server Action 适用性
+  const profile = await cachedProfile(session.userId)
+  return <p>{profile.displayName}</p>
+}
 
-| 场景                                       | 通道                                  |
-| ------------------------------------------ | ------------------------------------- |
-| 表单驱动的服务端变更、单一请求             | Server Action + `<form action>`       |
-| 需要并行触发多个互不依赖的变更             | Route Handler + 客户端并行请求        |
-| 需要轮询、进度、长连接（SSE、上传进度）    | Route Handler + Client Component      |
-| 端点需要被非表单来源调用                   | Route Handler                         |
+async function cachedProfile(userId: string) {
+  'use cache'
+  cacheLife('minutes')
+  return getProfile(userId)
+}
+```
 
-选型分三步：先决定路由按什么时机生成 HTML，再决定组件在哪一侧执行，最后决定数据走哪一层缓存 API。三者交叉后才是项目的实际表现。Server Action 是叠加在交互层的可选通道，按表单场景决定是否启用。
+验证会话发生在缓存外，每次请求仍要执行；缓存输入来自验证后的身份。可能随时变化的权限检查也应放在缓存外，不能把命中缓存当作授权。不要直接信任客户端传来的用户 ID，也不要让个性化结果缺少决定其可见范围的缓存输入。
 
-## 总结
+### 动态路由
 
-1. 渲染时机由 API 决定：`cookies()` / `headers()` / `searchParams` / `connection()` 落 Dynamic，`use cache` 落 Cached，其余纯输入落 Static；混合模式用 `<Suspense>` 隔离。
-2. 数据按作用域缓存：请求内用 `cache()`，跨请求用 `use cache`，跨实例持久用 `use cache: remote`；运行时数据必须穿透缓存边界，不能进入 cache key。
-3. Server Action 是表单优先的服务端变更通道：配合 `<form action>` 和 `useActionState` 处理 pending；并行、轮询、外部端点等场景用 Route Handler 替代。
+参数能在构建期确定、且值得提前生成时，导出 `generateStaticParams`；路径数量大时只提供必要样本，控制构建阶段的读取和生成成本。启用 Cache Components 后，样本参数在构建时预渲染，其余参数在请求时处理；读取请求期参数时，将内容放在 `<Suspense>` 或 `loading.tsx` 提供的边界内。
+
+下面展示动态段与参数的对应关系，页面通过异步 `params` 读取当前值：
+
+```tsx fold title="app/[slug]/page.tsx"
+export function generateStaticParams() {
+  return [{ slug: 'intro' }, { slug: 'api' }]
+}
+
+export default async function Page({
+  params,
+}: {
+  params: Promise<{ slug: string }>
+}) {
+  const { slug } = await params
+  return <h1>{slug}</h1>
+}
+```
+
+启用 Cache Components 后，路由段配置 `dynamicParams` 不可用。业务只接受固定路径集合时，应在运行时校验参数，并用 `notFound()` 处理无效值。`generateStaticParams` 至少返回一组参数，空数组会导致构建报错。构建时能获取这些参数，也不代表请求期读取的内容就不需要缓存或等待边界。
+
+## 高级 API
+
+高级能力主要用于细调缓存生命周期、控制同步代码的生成时机，以及解决多实例部署中的复用问题。采用前应明确要解决的限制，并核对版本与平台支持。
+
+### Cache Components
+
+Cache Components 支持缓存异步函数或组件的输出，并让可预渲染与请求期内容共存。现有项目需要启用时，在 Next.js 配置中设置 `cacheComponents`；当前版本还应显式设置 `partialPrefetching`，用于客户端导航的部分预取：
+
+```ts fold title="next.config.ts"
+export default {
+  cacheComponents: true,
+  partialPrefetching: true,
+}
+```
+
+缓存粒度按数据边界选择。只缓存数据函数，界面可以继续按请求组合；缓存整个组件时，组件输出也会复用，必须确认其中没有未区分的请求数据。函数参数和捕获的值会参与缓存键，输入与输出也需要满足框架的序列化要求。
+
+`cacheLife` 放在声明缓存的函数或组件中，接受内置档位或自定义对象。未显式设置时使用 `default` 档位，建议在缓存边界内明确声明。其它内置档位包括 `seconds`、`minutes`、`hours`、`days`、`weeks` 和 `max`；需要更精确的策略时，分别控制三个时间参数：
+
+| 参数 | 控制范围 |
+| --- | --- |
+| `stale` | 客户端可以复用结果而不检查服务端的时间 |
+| `revalidate` | 超过该时间后，后续请求触发服务端后台更新 |
+| `expire` | 超过该时间后，后续请求需要等待新结果 |
+
+例如在已有缓存函数内，用自定义对象替换档位调用：
+
+```ts fold
+cacheLife({ stale: 300, revalidate: 900, expire: 3600 })
+```
+
+单位为秒。自定义时，`expire` 必须大于 `revalidate`，否则 Next.js 会拒绝该配置。时间重新验证由后续请求触发，不是固定时刻运行的后台定时任务；短生命周期缓存可能无法进入预渲染结果，使用时仍需 `<Suspense>` 等待界面。
+
+启用前确认部署使用 Node.js 运行时，并迁移旧式 `dynamic`、`revalidate`、`fetchCache` 路由配置。尚未启用 Cache Components 的项目继续使用 `fetch` 的 `cache`、`next.revalidate` 等旧模型选项；迁移时逐项对应缓存与请求期策略，切回旧模型时也要撤销缓存指令并恢复对应实现。
+
+### 渲染控制
+
+同步读取当前时间、随机数或同步数据库时，需要决定生成的值是否随缓存复用。需要复用时，在 `'use cache'` 边界内读取；需要运行时生成时，在未缓存的服务端组件中用 `io()` 排除同步读取的预渲染执行：
+
+```tsx fold
+import { io } from 'next/cache'
+
+async function GeneratedAt() {
+  await io()
+  return <p>{new Date().toISOString()}</p>
+}
+```
+
+父组件用 `<Suspense>` 包裹 `GeneratedAt`。`io()` 允许这段内容参与运行时预取；必须等待真实用户请求时，才使用 `connection()`。普通异步取数或已经读取请求 API 的组件通常不需要额外调用它们，也不要把调用放到过高的位置，使无关内容一起推迟。
+
+组件在模块初始化时访问 `window` 或 `document`、无法在服务端运行时，可以在 Client Component 中通过 `next/dynamic` 配置 `ssr: false`。这一选择会让对应内容等待客户端 JavaScript，适合无法服务端执行的依赖；普通状态和事件交互使用 `'use client'` 即可。
+
+### 缓存扩展
+
+一次渲染中的重复查询，与多个实例之间的缓存共享，需要区分复用范围和存储位置：
+
+| 需求 | API | 使用边界 |
+| --- | --- | --- |
+| 多个 Server Component 重复调用同一查询 | React `cache()` | 一次服务端渲染内去重，不跨请求复用 |
+| 复用函数或组件的结果 | `'use cache'` | 按输入缓存；请求期结果默认保存在实例内存中 |
+| 请求期的高成本结果需要跨实例共享 | `'use cache: remote'` | 使用远程缓存处理器，增加网络往返与存储成本 |
+
+React `cache()` 包装查询后，导出同一个包装函数供组件调用，不在每个组件内部重新创建。假设 `queryById` 是数据库查询，下面让同一次渲染中的调用复用结果：
+
+```ts fold title="lib/query.ts"
+import { cache } from 'react'
+import { queryById } from './db'
+
+export const readById = cache(async (id: string) => queryById(id))
+```
+
+相同参数才能命中，对象参数按引用比较。相同 URL 和选项的 GET `fetch` 已有渲染内去重能力，数据库或 SDK 查询再按需使用 `cache()`。
+
+普通 `'use cache'` 的请求期缓存不保证在 serverless 请求之间存活。远程缓存需要部署平台提供处理器，或通过 `cacheHandlers` 配置；确认多实例共享可以提高命中率、降低上游负载后，再把相应函数改为 `'use cache: remote'`。输入几乎每次都不同的查询，即使改成远程缓存也可能持续未命中。
+
+维护旧缓存模型时可继续使用 `unstable_cache`，迁移到 Cache Components 后改用缓存指令。部署时同时检查实例生命周期、共享缓存配置和缓存更新能否覆盖所有实例；开发环境的缓存命中不能证明多实例环境行为相同。
+
+模块级变量也不能替代请求隔离。请求 A 把当前用户写入模块后等待异步结果，请求 B 可能在此期间覆盖它，A 恢复执行时就会读到 B 的用户。用户状态应保存在请求上下文或局部变量中，共享可变数据交给数据库等存储；缓存只复用查询或计算结果。
+
+## 参考资料
+
+- [官方缓存说明](https://nextjs.org/docs/app/getting-started/caching)；
+- [错误处理文档](https://nextjs.org/docs/app/getting-started/error-handling)；
+- [数据获取文档](https://nextjs.org/docs/app/getting-started/fetching-data)；
+- [useActionState 文档](https://react.dev/reference/react/useActionState)；
+- [缓存更新文档](https://nextjs.org/docs/app/getting-started/revalidating)；
+- [动态参数读取](https://nextjs.org/docs/app/api-reference/file-conventions/dynamic-routes)；
+- [动态参数文档](https://nextjs.org/docs/app/api-reference/functions/generate-static-params)；
+- [use cache 文档](https://nextjs.org/docs/app/api-reference/directives/use-cache)；
+- [cacheLife 文档](https://nextjs.org/docs/app/api-reference/functions/cacheLife)；
+- [迁移文档](https://nextjs.org/docs/app/guides/migrating-to-cache-components)；
+- [io 文档](https://nextjs.org/docs/app/api-reference/functions/io)；
+- [connection 文档](https://nextjs.org/docs/app/api-reference/functions/connection)；
+- [React cache 文档](https://react.dev/reference/react/cache)；
+- [远程缓存文档](https://nextjs.org/docs/app/api-reference/directives/use-cache-remote)；
+- [部署文档](https://nextjs.org/docs/app/guides/self-hosting)。
