@@ -1,0 +1,403 @@
+---
+createdAt: '2026-04-23 18:13'
+order: 1
+---
+
+import { PerformanceDemo } from '../../components/PerformanceDemo'
+
+# 性能指标采集
+
+排查「页面慢」时，需要先分清用户是在等内容出现，还是在等操作反馈。不同的等待需要用不同的指标衡量，明确指标的含义、采集时机和评价标准，才能让采集的数据成为排查依据。
+
+## 实时数据
+
+<PerformanceDemo />
+
+## 性能指标体系
+
+[Core Web Vitals](https://web.dev/articles/vitals#core-web-vitals) 包括 **LCP、INP 和 CLS**，分别衡量主要内容加载、交互响应和布局稳定性。其它指标补充内容绘制与请求阶段的诊断：
+
+| 指标 | 衡量内容 | 对应问题 |
+| --- | --- | --- |
+| [LCP](https://web.dev/articles/lcp) (Largest Contentful Paint) | 视口内最大文本块、图像或视频首帧的呈现时间 | 首屏已有内容，但主要图片或正文显示慢 |
+| [INP](https://web.dev/articles/inp) (Interaction to Next Paint) | 一次访问中较慢交互到下一帧绘制的延迟 | 点击、轻触或键盘输入后，页面的视觉反馈迟缓 |
+| [CLS](https://web.dev/articles/cls) (Cumulative Layout Shift) | 一次访问中最大意外布局偏移会话的累计分数 | 内容突然跳动，打断阅读或引发按钮误点击 |
+| [FP](https://www.w3.org/TR/paint-timing/) (First Paint) | 首次绘制时间，可能尚无文本或图像 | 页面迟迟未绘制，辅助排查白屏 |
+| [FCP](https://web.dev/articles/fcp) (First Contentful Paint) | 首次绘制文本、图像等内容的时间 | 文字或图片迟迟不出现 |
+| [TTFB](https://web.dev/articles/ttfb) (Time To First Byte) | 导航开始到收到响应首字节的时间 | 等待响应首字节过久 |
+| DNS Lookup | DNS 查找阶段耗时 | 域名解析慢 |
+| 连接建立耗时 | 建立连接所需时间；HTTPS 下可能包含 TLS 握手 | 网络连接或 TLS 握手慢 |
+
+::: info 有关 FP 与 INP
+
+- FP 无统一官方阈值，浏览器也可能不提供该指标的记录。排查白屏可与 FCP 对照，缺失时先确认采集支持、时机和页面状态；
+- INP 自 2024 年 3 月起取代 FID，观察整次访问的交互，覆盖输入延迟、事件处理和下一帧呈现等待；FID 只衡量首次交互的输入延迟。
+
+:::
+
+## 指标阈值建议
+
+| 指标 | 优秀   | 需优化            | 差      |
+| ---- | ------ | ----------------- | ------- |
+| LCP  | ≤2.5s  | >2.5s 且 ≤4.0s    | >4.0s   |
+| INP  | ≤200ms | >200ms 且 ≤500ms  | >500ms  |
+| CLS  | ≤0.1   | >0.1 且 ≤0.25     | >0.25   |
+| FCP  | ≤1.8s  | >1.8s 且 ≤3.0s    | >3.0s   |
+| TTFB | ≤800ms | >800ms 且 ≤1800ms | >1800ms |
+
+::: info 阈值说明
+
+真实用户数据按各指标的第 75 百分位（P75）评估，移动端与桌面端分开统计。将多次访问的数值从小到大排序，P75 表示约 75% 的访问中，该指标不超过这个值。
+
+例如，LCP 的 P75 为 2.4s，表示约 75% 的访问能在 2.4s 内呈现主要内容，达到 ≤2.5s 的优秀标准。
+
+阈值参照 [Core Web Vitals 划分标准](https://web.dev/articles/defining-core-web-vitals-thresholds/)及 FCP、TTFB 的官方说明。
+
+:::
+
+## 指标优化
+
+同一指标偏高可能有不同成因，应先定位具体的耗时阶段或偏移来源，再选择优化措施：
+
+| 指标 | 优先检查 | 优化措施 |
+| --- | --- | --- |
+| [LCP](https://web.dev/articles/optimize-lcp) | 实际 LCP 元素，以及 TTFB、资源加载延迟、下载耗时和元素渲染延迟 | 在 HTML 中提供关键内容和资源地址；LCP 图片避免懒加载，使用合适尺寸与格式，按需提高加载优先级；减少阻塞渲染的 CSS/JS |
+| [INP](https://web.dev/articles/optimize-inp) | 慢交互的输入延迟、事件处理耗时和下一帧呈现等待 | 拆分长任务，为渲染让出主线程；事件回调只保留必要工作，耗时且不依赖 DOM 的计算移至 Web Worker；避免交错读写布局属性，减少大范围 DOM 更新 |
+| [CLS](https://web.dev/articles/optimize-cls) | 发生偏移的元素，以及图片加载、动态内容插入和字体替换等触发原因 | 设置图片宽高或 `aspect-ratio` 预留空间，为广告和异步内容保留位置；匹配回退字体的尺寸；位移动画优先使用 `transform` |
+| FP / FCP | TTFB、阻塞绘制的 CSS/JS，以及字体加载是否隐藏文字 | 内联关键 CSS，延后非关键脚本和样式；减少首屏对脚本与接口的依赖；用合适的 `font-display` 策略尽早显示文字 |
+| [TTFB](https://web.dev/articles/optimize-ttfb) | 重定向、DNS、连接建立和源站响应各阶段耗时 | 减少重定向；可缓存内容使用 CDN 或服务端缓存；优化源站中的慢查询、接口依赖和 HTML 生成过程 |
+| DNS Lookup | 解析耗时高的域名，以及是否引入过多资源域名 | 减少不必要的域名；对即将访问的跨域资源使用 `dns-prefetch` 提前解析 |
+| 连接建立耗时 | 新连接数量，以及连接与 TLS 握手耗时 | 复用已有连接；对关键跨域资源按需使用 `preconnect`，避免为大量域名预连接 |
+
+::: info 优化说明
+
+`font-display: swap` 可让文字先使用回退字体显示，但字体替换仍可能引发布局偏移；需同时控制两种字体的尺寸差异，例如用 `size-adjust` 校准回退字体。
+
+HTML 中的 `dns-prefetch` 和 `preconnect` 作用于后续请求，无法缩短本次文档已完成的解析与连接阶段。
+
+:::
+
+## 采集方案
+
+页面体验指标用 `web-vitals` 计算；页面与资源的加载耗时分别通过 Navigation Timing、Resource Timing 采集；业务耗时用 User Timing 打点。`PerformanceObserver` 用于持续接收浏览器记录的性能数据。
+
+以下示例在浏览器入口初始化一次，共用 `recordMetric()` 保存性能数据。Map 以 `key` 定位记录，默认使用指标名称；相同键会覆盖旧值。长期采集需限制记录数量，避免缓存增长：
+
+```js fold
+const metrics = new Map()
+
+function recordMetric(name, value, details = {}) {
+  const { key = name, unit = 'ms', ...extra } = details
+  metrics.set(key, { name, value, unit, ...extra })
+}
+```
+
+### 页面体验指标
+
+`web-vitals` 通过回调提供 FCP、LCP、INP 和 CLS，并处理交互分组和布局偏移会话。回调中的 `id` 用作 Map 键，同一指标更新时会覆盖旧值；CLS 单位为分数，其它指标为毫秒：
+
+```js fold
+import { onFCP, onLCP, onINP, onCLS } from 'web-vitals'
+
+function recordVital({ id, name, value }) {
+  recordMetric(name, value, { key: id, unit: name === 'CLS' ? 'score' : 'ms' })
+}
+
+onFCP(recordVital)
+onLCP(recordVital)
+onINP(recordVital)
+onCLS(recordVital)
+```
+
+部分回调需等到交互或页面隐藏；无交互时 INP 不产生值。不支持或尚未采到的指标保留为缺失，不用 0 填充。
+
+CLS 排除点击、轻触或键盘输入后 500ms 内的偏移，将相邻间隔小于 1 秒且会话跨度小于 5 秒的偏移归入同一会话，取最高累计分数。
+
+FP 通过 `PerformanceObserver` 读取 `paint` 性能记录。`buffered: true` 需指定单个 `type`，用于读取缓冲区中已有的记录；采到 FP 后停止观察：
+
+```js fold
+if (
+  typeof PerformanceObserver !== 'undefined' &&
+  PerformanceObserver.supportedEntryTypes?.includes('paint')
+) {
+  const observer = new PerformanceObserver((list) => {
+    const fp = list.getEntries().find((entry) => entry.name === 'first-paint')
+    if (!fp) return
+
+    recordMetric('FP', fp.startTime)
+    observer.disconnect()
+  })
+  observer.observe({ type: 'paint', buffered: true })
+}
+```
+
+### 页面导航指标
+
+[Navigation Timing](https://www.w3.org/TR/navigation-timing-2/) 用于记录当前文档各阶段的加载耗时。示例通过 `setTimeout()` 在 `load` 事件处理结束后采集，因为 `loadEventEnd` 此前为 0；加载完成前离开则无法取得完整导航数据：
+
+```js fold
+function recordNavigation() {
+  const [nav] = performance.getEntriesByType('navigation')
+  if (!nav) return
+
+  // 以下时长的单位均为毫秒
+  const timings = {
+    // 导航开始到收到响应首字节
+    TTFB: nav.responseStart - nav.startTime,
+    // 请求发出到收到响应首字节
+    REQUEST_WAIT: nav.responseStart - nav.requestStart,
+    // DNS 查找耗时，缓存或连接复用时可能为 0
+    DNS: nav.domainLookupEnd - nav.domainLookupStart,
+    // 连接建立耗时，HTTPS 可能包含 TLS 握手；连接复用时可能为 0
+    CONNECTION: nav.connectEnd - nav.connectStart,
+    // 导航开始到 HTML 文档解析完成
+    DOM_INTERACTIVE: nav.domInteractive - nav.startTime,
+    // 导航开始到 DOMContentLoaded 事件处理完成
+    DOM_CONTENT_LOADED: nav.domContentLoadedEventEnd - nav.startTime,
+    // 导航开始到 load 事件处理完成
+    LOAD: nav.loadEventEnd - nav.startTime,
+  }
+
+  for (const [name, value] of Object.entries(timings)) {
+    recordMetric(name, value)
+  }
+}
+
+const afterLoad = () => setTimeout(recordNavigation, 0)
+if (document.readyState === 'complete') {
+  afterLoad()
+} else {
+  window.addEventListener('load', afterLoad, { once: true })
+}
+```
+
+::: info SPA 路由与页面生命周期
+
+SPA 路由切换不会生成新的 `navigation` 性能记录，路由开始到业务内容就绪需另行打点。体验指标示例默认按整页导航采集；启用 [web-vitals 的软导航选项](https://github.com/GoogleChrome/web-vitals#report-metrics-for-soft-navigations) 前，需确认库版本与浏览器支持。`web-vitals` 也会处理后台加载、前进后退缓存和预渲染对指标的影响。
+
+:::
+
+### 资源加载指标
+
+[Resource Timing](https://www.w3.org/TR/resource-timing/) 记录资源耗时和传输大小。`performance.getEntriesByType('resource')` 只返回当前保留的资源记录；`PerformanceObserver` 可读取缓冲区中保留的记录，并持续观察后续资源。结束采集时调用 `resourceObserver?.disconnect()`：
+
+```js fold
+let resourceObserver = null
+
+if (
+  typeof PerformanceObserver !== 'undefined' &&
+  PerformanceObserver.supportedEntryTypes?.includes('resource')
+) {
+  resourceObserver = new PerformanceObserver((list) => {
+    for (const resource of list.getEntries()) {
+      // 资源总耗时（毫秒），写入记录的 value 字段
+      recordMetric('RESOURCE', resource.duration, {
+        // 用资源 URL 和开始时间生成唯一键
+        key: `resource:${resource.name}:${resource.startTime}`,
+        // 资源 URL
+        url: resource.name,
+        // 传输大小（字节）
+        transferSize: resource.transferSize,
+        // 编码后的响应体大小（字节）
+        encodedBodySize: resource.encodedBodySize,
+        // 解码后的响应体大小（字节）
+        decodedBodySize: resource.decodedBodySize,
+      })
+    }
+  })
+  resourceObserver.observe({ type: 'resource', buffered: true })
+}
+```
+
+缓冲容量有限，`buffered: true` 无法恢复已丢失的资源记录。长期采集应尽早订阅；缓冲区写满时，浏览器会触发 `resourcetimingbufferfull` 事件。可在事件处理中保存已有记录，再调用 `performance.clearResourceTimings()` 清空缓冲区或调用 `performance.setResourceTimingBufferSize()` 扩容。
+
+::: info 跨域与缓存
+
+跨域资源的部分加载时间和大小字段需服务器通过 `Timing-Allow-Origin` 响应头授权读取，否则可能为 0。`transferSize` 为 0 也可能表示命中本地缓存，不能单独判断缓存命中。
+
+:::
+
+### 自定义性能打点
+
+接口等待、复杂计算等业务耗时，用 [User Timing](https://www.w3.org/TR/user-timing/) 的 `performance.mark()` 标记起止点，再用 `performance.measure()` 计算时长。异步操作完成后再标记终点：
+
+```js fold
+performance.mark('action_start')
+// ... 业务逻辑
+performance.mark('action_end')
+const measure = performance.measure('action', 'action_start', 'action_end')
+
+recordMetric('ACTION', measure.duration, { key: `action:${measure.startTime}` })
+
+performance.clearMarks('action_start')
+performance.clearMarks('action_end')
+performance.clearMeasures('action')
+```
+
+采集后清除标记和测量记录，避免累积；并发操作使用不同标记名，防止起止点混用。
+
+## 白屏时间长 / 首屏渲染慢
+
+首屏优化涉及网络、资源、数据和渲染四个环节：
+
+```d2 maxHeight=400
+title: |md
+  **首屏渲染优化方向**
+| {near: top-center}
+
+首屏加载慢: 页面白屏或首屏缓慢
+
+网络优化: {
+  grid-columns: 1
+  height: 500
+  连接复用
+  CDN 与边缘缓存
+  预加载关键资源
+}
+
+资源优化: {
+  grid-columns: 1
+  height: 500
+  代码分割: "代码分割与\n按需加载"
+  资源压缩
+  Tree Shaking
+}
+
+数据优化: {
+  grid-columns: 1
+  height: 500
+  缓存关键数据
+  并行无依赖接口
+  延后非关键数据
+}
+
+渲染优化: {
+  grid-columns: 1
+  height: 500
+  SSR/SSG
+  流式渲染
+  减少主线程阻塞
+  骨架屏: "骨架屏\n改善等待体验"
+}
+
+首屏加载慢 -> 网络优化
+首屏加载慢 -> 资源优化
+首屏加载慢 -> 数据优化
+首屏加载慢 -> 渲染优化
+```
+
+### 排查路径
+
+先确认采集支持和页面状态，再结合绘制指标、TTFB 与资源加载数据定位瓶颈。已有绘制可能只是背景、标题或占位内容；用户仍反馈白屏时，需检查关键业务内容、遮罩层和运行时异常：
+
+```d2 maxHeight=460
+title: |md
+  **白屏与首屏缓慢排查路径**
+| {near: top-center}
+
+report: 反馈白屏或首屏慢
+verify: "确认采集有效\n浏览器支持、采集时机\n页面状态"
+render: "检查导航与绘制指标\nTTFB、FP/FCP、LCP"
+network: "导航阶段耗时\n重定向、DNS\n连接建立\n源站响应" {width: 170}
+data: "关键请求与\n首屏渲染" {width: 170}
+resources: "资源加载\n与主线程\n体积、压缩\n渲染阻塞\n长任务" {width: 170}
+lcp: "主要内容渲染\nLCP 候选\n图片与关键接口\nSSR/CSR" {width: 170}
+business: "业务内容显示\n关键接口、DOM\n遮罩层\n运行时异常" {width: 170}
+
+report -> verify -> render
+render -> network: TTFB 偏高
+render -> data: "FP、FCP 均缺失\n或只有 FP"
+render -> resources: FCP 偏高
+render -> lcp: "LCP 偏高、缺失\n或候选元素不符"
+render -> business: "已有绘制\n业务内容未显示"
+```
+
+### 常见原因及解决办法
+
+| 原因                   | 表现                                                             | 解决办法                                                                          |
+| ---------------------- | ---------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| **网络等待时间长**     | TTFB 偏高或导航瀑布图中某阶段耗时突出                            | 按导航阶段定位瓶颈，优化缓存、CDN 或源站处理                                      |
+| **首屏接口阻塞渲染**   | FCP 已出现，主要内容仍等待接口；关键请求长时间 pending           | 并行关键请求；先渲染与数据无关的结构，延后非关键数据                              |
+| **渲染阻塞资源**       | FP 很晚、DOMContentLoaded 延迟或 LCP 偏高                        | 按脚本依赖选择 `async` 或 `defer`；内联关键 CSS；延后非关键 CSS/JS                |
+| **资源体积偏大**       | 脚本、样式或图片传输耗时高                                       | 用 Resource Timing 与 Bundle Analyzer 定位；拆分、压缩资源，延后非首屏图片       |
+| **JS 执行慢 / 长任务** | 主线程任务超过 50ms，交互或绘制被延迟                            | 拆分长任务，将无需 DOM 的计算移到 Web Worker；对非即时反馈的高频任务使用防抖或节流，长列表使用虚拟化 |
+| **资源加载失败**       | 资源请求报 4xx/5xx 或跨域错误，关键内容缺失                     | 检查资源路径、CDN 与 CORS 配置，为关键内容提供失败兜底                            |
+| **内存持续增长**       | 运行一段时间后变慢，内存持续增长                                 | 清理不再使用的监听器和定时器；用 Memory 面板比较堆快照                            |
+
+### 关键资源配置示例
+
+加载提示应按资源的使用时机和重要性选择：
+
+| 方式 | 提前处理 | 适用场景 |
+| --- | --- | --- |
+| [`dns-prefetch`](https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Attributes/rel/dns-prefetch) | 只解析 DNS，不建立连接或下载资源 | 后续可能访问的跨域域名，开销较小 |
+| [`preconnect`](https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Attributes/rel/preconnect) | 解析 DNS 并建立连接，HTTPS 包括 TLS 握手；不下载资源 | 即将使用的少量关键跨域来源 |
+| [`preload`](https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Attributes/rel/preload) | 提前下载指定资源，不自动执行脚本或应用样式 | 当前页面需要、但浏览器发现较晚的资源，如字体和 CSS 背景图 |
+
+下面以图片、脚本、样式和字体为例，给出预加载、优先级设置与延迟加载的常见配置：
+
+```html fold
+<!-- styles.css 中 .hero 使用此背景图；预加载可提前发现并提高优先级 -->
+<link rel="preload" href="/hero-background.webp" as="image" fetchpriority="high" />
+<link rel="stylesheet" href="/styles.css" />
+<!-- 为后续异步加载的第三方脚本预解析 DNS，不提前建立连接 -->
+<link rel="dns-prefetch" href="https://example.com" />
+
+<!-- defer 并行下载，HTML 解析完成后按文档顺序执行 -->
+<script src="/main.js" defer></script>
+
+<!-- 关键 CSS 内联 -->
+<style>
+  /* 关键渲染路径 CSS */
+</style>
+
+<!-- 非关键样式下载后应用，preload 仍会提前发起请求 -->
+<link
+  rel="preload"
+  href="/non-critical.css"
+  as="style"
+  onload="this.onload=null;this.rel='stylesheet'"
+/>
+<noscript><link rel="stylesheet" href="/non-critical.css" /></noscript>
+
+<!-- async 并行下载，下载后尽快执行，不保证脚本间的执行顺序 -->
+<script src="https://example.com/analytics.js" async></script>
+
+<!-- preload 提前请求字体；font-display: swap 让文字先用后备字体显示，Web 字体加载后再切换 -->
+<link
+  rel="preload"
+  href="/fonts/main.woff2"
+  as="font"
+  type="font/woff2"
+  crossorigin
+/>
+<style>
+  @font-face {
+    font-family: 'Main';
+    src: url('/fonts/main.woff2') format('woff2');
+    font-display: swap;
+  }
+</style>
+
+<!-- 页面主体：HTML 可发现的 LCP 图片提高优先级，不要延迟加载 -->
+<img
+  src="/hero-1200.webp"
+  srcset="/hero-640.webp 640w, /hero-1200.webp 1200w"
+  sizes="100vw"
+  alt="首屏主视觉"
+  width="1200"
+  height="800"
+  fetchpriority="high"
+/>
+
+<!-- 首屏外图片延迟加载 -->
+<img src="/detail.webp" alt="详情图片" width="800" height="600" loading="lazy" />
+```
+
+::: info 使用限制
+
+预加载图片、字体或脚本时，都应按资源实际的加载方式设置 `as` 和 `crossorigin`，避免因请求不匹配而重复下载；控制预加载数量，避免挤占首屏带宽。
+
+非关键样式的异步应用可参照[加载指南](https://web.dev/articles/defer-non-critical-css)。若 CSP 禁止内联 `onload`，需将事件处理代码移到 CSP 允许执行的 JS 文件中，通过事件监听在下载完成后将 `rel` 改为 `stylesheet`，让样式生效。
+
+:::
